@@ -1,0 +1,91 @@
+export const LIBRARIES: Library[] = [
+    // --- Tier 0: no dependencies on anything else in this list ---
+    { name: "opencl-headers", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-Headers" },
+    { tag: "v7.9.0", url: "https://github.com/stephenberry/glaze" },
+
+    { build: "Custom", tag: "v2.6.2", url: "https://github.com/autotools-mirror/libtool" },
+    { build: "Custom", tag: "bzip2-1.0.8", url: "https://sourceware.org/git/bzip2" },
+
+    { tag: "v3.4.0", url: "https://github.com/google/double-conversion" },
+    { tag: "2.3.3", url: "https://github.com/zlib-ng/zlib-ng" },
+    { sourceSubdir: "build/cmake", tag: "v1.5.7", url: "https://github.com/facebook/zstd" },
+    { tag: "v1.2.0", url: "https://github.com/google/brotli" },
+    { tag: "1.4.0", url: "https://github.com/google/highway" },
+    { tag: "v5.8.3", url: "https://github.com/tukaani-project/xz" },
+    { tag: "v1.25", url: "https://github.com/ebiggers/libdeflate" },
+
+    {
+        archiveSubdir: "glew-2.3.1",
+        name: "glew",
+        sourceSubdir: "build/cmake",
+        tag: "",
+        url: "https://github.com/nigels-com/glew/releases/download/glew-2.3.1/glew-2.3.1.zip",
+    },
+    { tag: "release-0.5.3", url: "https://github.com/mity/md4c" },
+    { tag: "v0.15.1", url: "https://github.com/quickjs-ng/quickjs" },
+    { tag: "pcre2-10.47", url: "https://github.com/PCRE2Project/pcre2" },
+    { tag: "v2.5.4", url: "https://github.com/uclouvain/openjpeg" },
+    { tag: "0.30.1", url: "https://github.com/aous72/OpenJPH" },
+    { tag: "v3.2.2", url: "https://github.com/AcademySoftwareFoundation/imath" },
+    { name: "lcms2", tag: "lcms2.19.1", url: "https://github.com/mm2/Little-CMS" },
+    { build: "Meson", tag: "v2.6.0", url: "https://github.com/cisco/openh264" },
+    { build: "Meson", tag: "1.5.4", url: "https://code.videolan.org/videolan/dav1d" },
+    { tag: "3.4", url: "https://github.com/glfw/glfw" },
+    { build: "Custom", tag: "release-78.3", url: "https://github.com/unicode-org/icu" },
+    { tag: "v1.1.1", url: "https://github.com/strukturag/libde265" },
+    { tag: "v1.6.0", url: "https://github.com/webmproject/libwebp" },
+
+    // --- Tier 1: depend only on Tier 0 libs ---
+    { name: "opencl-icd", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-ICD-Loader" },
+    { tag: "v0.7.4", url: "https://github.com/randy408/libspng" },
+    { tag: "main", url: "https://github.com/libjpeg-turbo/libjpeg-turbo" },
+    { tag: "v4.1.7", url: "https://github.com/projectM-visualizer/projectm" },
+    { tag: "v1.6.58", url: "https://github.com/pnggroup/libpng" },
+    { tag: "v5.1.8", url: "https://github.com/nuspell/nuspell" },
+    {
+        archiveSubdir: "LibRaw-0.22.1",
+        build: "Custom",
+        name: "libraw",
+        tag: "",
+        url: "https://www.libraw.org/data/LibRaw-0.22.1-Win64.zip",
+    },
+    { tag: "v2.15.3", url: "https://gitlab.gnome.org/GNOME/libxml2" },
+    { tag: "v1.11.4", url: "https://github.com/nih-at/libzip/" },
+    { tag: "v4.7.2", url: "https://gitlab.com/libtiff/libtiff" },
+    { tag: "v3.4.13", url: "https://github.com/AcademySoftwareFoundation/openexr" },
+    { tag: "VER-2-14-3", url: "https://gitlab.freedesktop.org/freetype/freetype" },
+    { tag: "v1.9.4", url: "https://github.com/libgit2/libgit2" },
+
+    // --- Tier 2: depend on Tier 1 libs ---
+    { tag: "release-1.4.5", url: "https://github.com/fltk/fltk" },
+    { tag: "14.2.1", url: "https://github.com/harfbuzz/harfbuzz" },
+    { tag: "v0.12.0", url: "https://github.com/libjxl/libjxl" },
+    { tag: "v3.8.8", url: "https://github.com/libarchive/libarchive" },
+
+    // --- Tier 3: depends on Tier 2/1 ---
+    { tag: "v1.23.1", url: "https://github.com/strukturag/libheif" },
+
+    // --- End-user apps, excluded from dependency ordering per instructions ---
+    { build: "Custom", tag: "n8.1.2", url: "https://github.com/FFmpeg/FFmpeg" },
+    { build: "Custom", tag: "7.1.2-27", url: "https://github.com/imagemagick/imagemagick" },
+    { build: "Custom", tag: "v6.11.1", url: "https://github.com/qt/qt5" },
+];
+
+export function resolveLibraryName(library: Library) {
+    return library.name ?? library.url.replace(/\/+$/, "").split("/").pop()!.toLowerCase();
+}
+
+export function getPin(library: Library): string {
+    if (library.archiveSubdir) {
+        return library.url;
+    }
+    return library.tag;
+}
+
+export function shouldBuildLibrary(name: string, options: CliOptions): boolean {
+    const key = name.toLowerCase();
+    if (options.only) {
+        return options.only.has(key);
+    }
+    return !options.exclude.has(key);
+}

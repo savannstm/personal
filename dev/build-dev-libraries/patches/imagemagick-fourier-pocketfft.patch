@@ -1,0 +1,267 @@
+diff --git a/MagickCore/fourier.c b/MagickCore/fourier.c
+index 47aa2b1..3d28bde 100644
+--- a/MagickCore/fourier.c
++++ b/MagickCore/fourier.c
+@@ -61,31 +61,242 @@
+ #include "MagickCore/resource_.h"
+ #include "MagickCore/string-private.h"
+ #include "MagickCore/thread-private.h"
+-#if defined(MAGICKCORE_FFTW_DELEGATE)
+-#if defined(_MSC_VER)
+-#define ENABLE_FFTW_DELEGATE
+-#elif !defined(__cplusplus) && !defined(c_plusplus)
++/*
++  FFTW3 is GPL, and statically linking it into MagickCore drags that copyleft onto
++  every binary that links MagickCore in turn.  PocketFFT (BSD-3-Clause) replaces it.
++  This file only ever asks FFTW for two out-of-place 2-D transforms, r2c and c2r,
++  each planned with FFTW_ESTIMATE and executed exactly once, so the shim below
++  reimplements that surface and the rest of the file is untouched.
++
++  PocketFFT is #included here rather than added to MagickCore/Makefile.am because
++  ImageMagick ships a pre-generated Makefile.in and configure runs without
++  autoreconf; a new source file would mean patching automake's object lists too.
++
++  ENABLE_FFTW_DELEGATE is now unconditional.  It used to be gated on
++  MAGICKCORE_FFTW_DELEGATE, which configure only defines when it finds libfftw3 -
++  and there is nothing left to find.
++*/
+ #define ENABLE_FFTW_DELEGATE
+-#endif
+-#endif
+-#if defined(ENABLE_FFTW_DELEGATE)
+-#if defined(MAGICKCORE_HAVE_COMPLEX_H)
+-#include <complex.h>
+-#endif
+-#include <fftw3.h>
+-#if !defined(MAGICKCORE_HAVE_CABS)
++
++/*
++  configure defines MAGICKCORE_HAVE_COMPLEX_H whenever <complex.h> merely exists,
++  which it does under MSVC without a usable C99 _Complex or I.  Four sites further
++  down switch on it to do native complex arithmetic on fftw_complex; undefining it
++  once here routes all of them to the two-component code instead, and keeps this
++  patch to a single hunk.
++*/
++#undef MAGICKCORE_HAVE_COMPLEX_H
++
++#include "MagickCore/pocketfft.c"
++
++/*
++  Macros the amalgamation above leaves defined; none of them are namespaced and
++  ROTM90 in particular is a plausible collision.
++*/
++#undef DEALLOC
++#undef NFCT
++#undef NOINLINE
++#undef RALLOC
++#undef ROTM90
++#undef SWAP
++#undef WARN_UNUSED_RESULT
++
++#define FFTW_ESTIMATE  0U
++
++typedef double fftw_complex[2];
++
++typedef struct _FFTWPlan
++{
++  size_t
++    n0,
++    n1;
++
++  cfft_plan
++    column_plan;
++
++  rfft_plan
++    row_plan;
++} *fftw_plan;
++
++static void fftw_destroy_plan(fftw_plan plan)
++{
++  if (plan == (fftw_plan) NULL)
++    return;
++  if (plan->column_plan != NULL)
++    destroy_cfft_plan(plan->column_plan);
++  if (plan->row_plan != NULL)
++    destroy_rfft_plan(plan->row_plan);
++  (void) RelinquishMagickMemory(plan);
++}
++
++static fftw_plan AcquireFFTWPlan(const int n0,const int n1)
++{
++  fftw_plan
++    plan;
++
++  plan=(fftw_plan) AcquireQuantumMemory(1,sizeof(*plan));
++  if (plan == (fftw_plan) NULL)
++    return((fftw_plan) NULL);
++  plan->n0=(size_t) n0;
++  plan->n1=(size_t) n1;
++  plan->row_plan=make_rfft_plan(plan->n1);
++  plan->column_plan=make_cfft_plan(plan->n0);
++  if ((plan->row_plan == NULL) || (plan->column_plan == NULL))
++    {
++      fftw_destroy_plan(plan);
++      return((fftw_plan) NULL);
++    }
++  return(plan);
++}
++
++static fftw_plan fftw_plan_dft_r2c_2d(const int n0,const int n1,
++  double *magick_unused(source),fftw_complex *magick_unused(destination),
++  const unsigned int magick_unused(flags))
++{
++  return(AcquireFFTWPlan(n0,n1));
++}
++
++static fftw_plan fftw_plan_dft_c2r_2d(const int n0,const int n1,
++  fftw_complex *magick_unused(source),double *magick_unused(destination),
++  const unsigned int magick_unused(flags))
++{
++  return(AcquireFFTWPlan(n0,n1));
++}
++
++/*
++  PocketFFT transforms one contiguous dimension at a time, so the 2-D transforms
++  are spelled out the way FFTW composes them internally: a real transform along the
++  fast axis, then a complex transform down the slow axis.  Scratch holds either one
++  row (n1 reals) or one column (n0 complex), whichever is larger.
++*/
++static double *AcquireFFTWScratch(const fftw_plan plan)
++{
++  const size_t
++    extent=plan->n0 > plan->n1 ? plan->n0 : plan->n1;
++
++  return((double *) AcquireQuantumMemory(extent,2*sizeof(double)));
++}
++
++static void fftw_execute_dft_r2c(const fftw_plan plan,double *source,
++  fftw_complex *destination)
++{
++  const size_t
++    center=plan->n1/2+1;
++
++  double
++    *scratch;
++
++  size_t
++    i,
++    j;
++
++  /*
++    A failed plan cannot be reported upwards: ImageMagick never checks the result
++    of fftw_plan_dft_r2c_2d, so the only option is to leave the output alone.
++  */
++  if (plan == (fftw_plan) NULL)
++    return;
++  scratch=AcquireFFTWScratch(plan);
++  if (scratch == (double *) NULL)
++    return;
++  for (i=0; i < plan->n0; i++)
++  {
++    (void) memcpy(scratch,source+i*plan->n1,plan->n1*sizeof(*scratch));
++    (void) rfft_forward(plan->row_plan,scratch,1.0);
++    /*
++      FFTPACK packs a real spectrum as r0,r1,i1,r2,i2,... and omits the imaginary
++      part of the Nyquist term when the length is even; FFTW wants n1/2+1 plain
++      complex bins.
++    */
++    destination[i*center][0]=scratch[0];
++    destination[i*center][1]=0.0;
++    for (j=1; j < center; j++)
++    {
++      destination[i*center+j][0]=scratch[2*j-1];
++      destination[i*center+j][1]=2*j < plan->n1 ? scratch[2*j] : 0.0;
++    }
++  }
++  for (j=0; j < center; j++)
++  {
++    for (i=0; i < plan->n0; i++)
++    {
++      scratch[2*i]=destination[i*center+j][0];
++      scratch[2*i+1]=destination[i*center+j][1];
++    }
++    (void) cfft_forward(plan->column_plan,scratch,1.0);
++    for (i=0; i < plan->n0; i++)
++    {
++      destination[i*center+j][0]=scratch[2*i];
++      destination[i*center+j][1]=scratch[2*i+1];
++    }
++  }
++  scratch=(double *) RelinquishMagickMemory(scratch);
++}
++
++static void fftw_execute_dft_c2r(const fftw_plan plan,fftw_complex *source,
++  double *destination)
++{
++  const size_t
++    center=plan->n1/2+1;
++
++  double
++    *scratch;
++
++  size_t
++    i,
++    j;
++
++  if (plan == (fftw_plan) NULL)
++    return;
++  scratch=AcquireFFTWScratch(plan);
++  if (scratch == (double *) NULL)
++    return;
++  /*
++    The column pass runs in place.  FFTW's multi-dimensional c2r destroys its input
++    as well, and InverseFourierTransformChannel frees the buffer immediately after.
++  */
++  for (j=0; j < center; j++)
++  {
++    for (i=0; i < plan->n0; i++)
++    {
++      scratch[2*i]=source[i*center+j][0];
++      scratch[2*i+1]=source[i*center+j][1];
++    }
++    (void) cfft_backward(plan->column_plan,scratch,1.0);
++    for (i=0; i < plan->n0; i++)
++    {
++      source[i*center+j][0]=scratch[2*i];
++      source[i*center+j][1]=scratch[2*i+1];
++    }
++  }
++  for (i=0; i < plan->n0; i++)
++  {
++    scratch[0]=source[i*center][0];
++    for (j=1; j < center; j++)
++    {
++      scratch[2*j-1]=source[i*center+j][0];
++      if (2*j < plan->n1)
++        scratch[2*j]=source[i*center+j][1];
++    }
++    (void) rfft_backward(plan->row_plan,scratch,1.0);
++    (void) memcpy(destination+i*plan->n1,scratch,plan->n1*sizeof(*scratch));
++  }
++  scratch=(double *) RelinquishMagickMemory(scratch);
++}
++
++static void fftw_cleanup(void)
++{
++}
++
++/*
++  fftw_complex is a bare double[2], so these stay macros over the two components
++  rather than anything out of <complex.h> - which is deliberately not included,
++  since MSVC does not provide a C99-compatible one.
++*/
+ #define cabs(z)  (sqrt(z[0]*z[0]+z[1]*z[1]))
+-#endif
+-#if !defined(MAGICKCORE_HAVE_CARG)
+ #define carg(z)  (atan2(cimag(z),creal(z)))
+-#endif
+-#if !defined(MAGICKCORE_HAVE_CIMAG)
+ #define cimag(z)  (z[1])
+-#endif
+-#if !defined(MAGICKCORE_HAVE_CREAL)
+ #define creal(z)  (z[0])
+-#endif
+-#endif
+ 
+ /*
+   Typedef declarations.

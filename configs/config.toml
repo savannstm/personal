@@ -1,0 +1,58 @@
+[unstable]
+build-std = ["core", "alloc", "std", "panic_abort"]
+profile-rustflags = true
+
+[build]
+rustflags = [
+    "-Zunstable-options",
+    "-C",
+    "linker=lld-link",
+    "-C",
+    "linker-features=-lld",
+    "-C",
+    "link-arg=-fuse-ld=lld",
+    "-C",
+    "target-cpu=x86-64-v3",
+]
+
+[profile.release]
+rustflags = [
+    "-Zdylib-lto",
+    "-Cpanic=abort",
+    "-C",
+    "prefer-dynamic=no",
+    "-C",
+    "target-feature=+crt-static",
+    "-C",
+    "linker-plugin-lto",
+    "-C",
+    "embed-bitcode=yes",
+    "-C",
+    "lto=fat",
+    "-C",
+    "codegen-units=1",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "strip=symbols",
+    "-C",
+    "link-arg=/OPT:REF",
+    "-C",
+    "link-arg=/OPT:ICF",
+    "-Z",
+    "default-visibility=hidden",
+    "-C",
+    "llvm-args=-function-sections=true",
+    "-C",
+    "llvm-args=-data-sections=true",
+    "-C",
+    "llvm-args=-fp-contract=fast",
+    "-C",
+    "llvm-args=-denormal-fp-math=positive-zero",
+    "-C",
+    "llvm-args=-enable-no-trapping-fp-math=true",
+    "-C",
+    "llvm-args=-enable-no-signed-zeros-fp-math=true",
+    "-C",
+    "llvm-args=-unroll-threshold=750",
+]

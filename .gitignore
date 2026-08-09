@@ -1,0 +1,7 @@
+/dev/build-dev-libraries/Repos
+/dev/build-dev-libraries/build-state.json
+/dev/build-dev-libraries/toolchains
+/.vscode
+/.kilo
+/node_modules
+/deno.lock

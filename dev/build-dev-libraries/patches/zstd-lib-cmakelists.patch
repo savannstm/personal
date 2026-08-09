@@ -1,0 +1,31 @@
+diff --git a/build/cmake/lib/CMakeLists.txt b/build/cmake/lib/CMakeLists.txt
+index 4e902a1f..0e8f1387 100644
+--- a/build/cmake/lib/CMakeLists.txt
++++ b/build/cmake/lib/CMakeLists.txt	
+@@ -97,7 +97,7 @@ if (ZSTD_LEGACY_SUPPORT)
+             ${LIBRARY_LEGACY_DIR}/zstd_v07.h)
+ endif ()
+ 
+-if (MSVC)
++if (MSVC OR (CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
+     set(MSVC_RESOURCE_DIR ${ZSTD_SOURCE_DIR}/build/VS2010/libzstd-dll)
+     set(PlatformDependResources ${MSVC_RESOURCE_DIR}/libzstd-dll.rc)
+ endif ()
+@@ -118,7 +118,7 @@ endmacro ()
+ 
+ # Define directories containing the library's public headers
+ set(PUBLIC_INCLUDE_DIRS ${LIBRARY_DIR})
+-set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /I \"${LIBRARY_DIR}\"")
++set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -I \"${LIBRARY_DIR}\"")
+ # Split project to static and shared libraries build
+ set(library_targets)
+ if (ZSTD_BUILD_SHARED)
+@@ -183,7 +183,7 @@ if (ZSTD_BUILD_SHARED AND ZSTD_BUILD_STATIC)
+ endif ()
+ 
+ # Add specific compile definitions for MSVC project
+-if (MSVC)
++if (MSVC OR (CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
+     if (ZSTD_BUILD_SHARED)
+         set_property(TARGET libzstd_shared APPEND PROPERTY COMPILE_DEFINITIONS "ZSTD_DLL_EXPORT=1;ZSTD_HEAPMODE=0;_CONSOLE;_CRT_SECURE_NO_WARNINGS")
+     endif ()

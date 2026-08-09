@@ -1,0 +1,20 @@
+diff --git a/icu4c/source/i18n/plurrule.cpp b/icu4c/source/i18n/plurrule.cpp
+index cfb50a83fb..236fba8de1 100644
+--- a/icu4c/source/i18n/plurrule.cpp
++++ b/icu4c/source/i18n/plurrule.cpp	
+@@ -9,6 +9,7 @@
+ * File plurrule.cpp
+ */
+ 
++#if !UCONFIG_NO_FORMATTING
+ #include <math.h>
+ #include <stdio.h>
+ 
+@@ -44,7 +45,6 @@
+ #include "numrange_impl.h"
+ #include "ulocimp.h"
+ 
+-#if !UCONFIG_NO_FORMATTING
+ 
+ U_NAMESPACE_BEGIN
+ 
