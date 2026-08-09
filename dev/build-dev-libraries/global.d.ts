@@ -1,4 +1,5 @@
 interface CliOptions {
+    checkLibraryUpdates: boolean;
     exclude: Set<string>;
     force: boolean;
     only: null | Set<string>;
@@ -92,4 +93,11 @@ interface Library {
     sourceSubdir?: string;
     tag: string;
     url: string;
+    // Arch Linux package name to check upstream versions against (see check-updates.ts).
+    // Defaults to resolveLibraryName(library) when omitted; set explicitly when that guess
+    // doesn't match the real package name (e.g. "freetype" -> "freetype2").
+    archPkg?: string;
+    // Override when `tag` isn't itself a clean version string (e.g. archiveSubdir entries
+    // with no tag, or tags like "pcre2-10.47" where the name is baked into the tag).
+    version?: string;
 }

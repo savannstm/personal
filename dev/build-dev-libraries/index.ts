@@ -6,7 +6,9 @@ import { exit } from "node:process";
 import pc from "picocolors";
 
 import { buildRepos } from "./build-runner.ts";
+import { checkLibraryUpdates } from "./check-updates.ts";
 import { setPrefix, WIN } from "./config.ts";
+import { LIBRARIES } from "./libraries.ts";
 import { bash } from "./shell.ts";
 import { configureToolchain, isToolchain, TOOLCHAINS } from "./toolchain.ts";
 
@@ -195,7 +197,8 @@ export function parseCliArgs(): CliOptions {
         .option("--only-debug", "Only build the debug (shared) variant of each library")
         .option("--only-release", "Only build the release (static) variant of each library")
         .option("--gen-toolchains", "Generate toolchain files in ./toolchains with default settings and exit")
-        .option("--use-codeview", "Also generate CodeView PDB debug files on MSVC.");
+        .option("--use-codeview", "Also generate CodeView PDB debug files on MSVC.")
+        .option("--check-library-updates", "Compare pinned versions against Arch Linux packages and exit", false);
 
     program.parse();
 
@@ -207,6 +210,7 @@ export function parseCliArgs(): CliOptions {
             typeof opts.useCodeview !== "undefined" ? Boolean(opts.useCodeview) : toolchain === "msvc" ? true : false,
         prefix = opts.prefix as null | string,
         options: CliOptions = {
+            checkLibraryUpdates: Boolean(opts.checkLibraryUpdates),
             exclude: new Set(splitList(opts.skip)),
             force: Boolean(opts.force),
             genToolchains: Boolean(opts.genToolchains),
@@ -241,6 +245,11 @@ export function parseCliArgs(): CliOptions {
 
 $.setPrintCommand(true);
 const options = parseCliArgs();
+
+if (options.checkLibraryUpdates) {
+    await checkLibraryUpdates(LIBRARIES);
+    exit(0);
+}
 
 if (options.genToolchains) {
     consola.info(pc.cyan("Generating toolchain files..."));
