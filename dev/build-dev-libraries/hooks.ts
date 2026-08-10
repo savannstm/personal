@@ -581,6 +581,13 @@ export async function prehook(name: string, path: string) {
             );
         },
         ffmpeg: async () => {
+            // Upstream 9.0 treats any lld-link "ignoring unknown argument" warning as a
+            // hard failure in test_ld, which kills the compiler sanity check outright
+            // for any -Wl,* flag the local LLD doesn't recognize. Revert to exit-code-only.
+            await $`sd -s -- ${`test $ret -eq 0 && ! echo "$output" | grep -qE 'LNK4044|lld-link: warning: ignoring unknown argument'`} ${"test $ret -eq 0"} configure`.cwd(
+                path,
+            );
+
             if (toolchainState().toolchain === "msvc") {
                 await $`sd -s -- ${"$AR rcs"} "llvm-ar rcs" compat/windows/makedef`.cwd(path);
                 await $`sd ${"SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'"} ${`SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)${toolchainState().useCodeview ? "$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.pdb)'" : "'"}`} configure`.cwd(
