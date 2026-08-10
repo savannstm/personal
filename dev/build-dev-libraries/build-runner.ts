@@ -20,7 +20,7 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     libjxl: { asan: false, debugOpt: true, fastmath: false, rtti: false },
     libraw: { asan: false, debugOpt: true, fastmath: false, rtti: false },
     nuspell: { asan: false, debugOpt: true, fastmath: true, rtti: false },
-    openexr: { asan: false, debugOpt: true, fastmath: false, rtti: false },
+    openexr: { asan: false, debugOpt: true, fastmath: false, rtti: true },
     projectm: { asan: false, debugOpt: false, fastmath: false, rtti: false },
     qt5: { asan: true, debugOpt: false, fastmath: true, rtti: true },
     "quickjs-ng": { asan: false, debugOpt: true, fastmath: false, rtti: false },
