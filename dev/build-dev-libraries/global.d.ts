@@ -83,7 +83,7 @@ interface PlainArgs {
     includeDirs: string[];
     libName: string;
     sources: string[];
-    defFile?: string; // e.g. "libbz2.def" — consumed by the linker to control exports/import-lib
+    defFile?: string; // e.g. "libbz2.def" - consumed by the linker to control exports/import-lib
     exportAllSymbols?: boolean;
 }
 interface Library {

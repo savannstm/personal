@@ -154,7 +154,7 @@ async function main() {
     const skipped = results.filter((r) => r.status === "skipped").length;
     const failed = results.filter((r) => r.status !== "ok" && r.status !== "skipped").length;
 
-    consola.log(`Complete — Success: ${success}  Skipped: ${skipped}  Failed: ${failed}`);
+    consola.log(`Complete - Success: ${success}  Skipped: ${skipped}  Failed: ${failed}`);
 }
 
 $.setPrintCommand(true);
