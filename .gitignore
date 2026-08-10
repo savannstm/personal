@@ -2,6 +2,6 @@
 /dev/build-dev-libraries/build-state.json
 /dev/build-dev-libraries/toolchains
 /.vscode
-/.kilo
+/.codegraph
 /node_modules
 /deno.lock
