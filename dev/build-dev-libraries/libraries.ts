@@ -2,6 +2,7 @@ export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
     { name: "opencl-headers", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-Headers" },
     { tag: "v8.0.0", url: "https://github.com/stephenberry/glaze" },
+    { tag: "v8.2.10", url: "https://github.com/fastfloat/fast_float" },
 
     { build: "Custom", tag: "v2.6.2", url: "https://github.com/autotools-mirror/libtool" },
     { build: "Custom", tag: "bzip2-1.0.8", url: "https://sourceware.org/git/bzip2", version: "1.0.8" },
@@ -31,6 +32,8 @@ export const LIBRARIES: Library[] = [
     { name: "lcms2", tag: "lcms2.19.1", url: "https://github.com/mm2/Little-CMS" },
     { build: "Meson", tag: "v2.6.0", url: "https://github.com/cisco/openh264" },
     { build: "Meson", tag: "1.5.4", url: "https://code.videolan.org/videolan/dav1d" },
+    { tag: "v2.3.2", url: "https://github.com/ultravideo/kvazaar" },
+    { build: "Rust", tag: "v0.8.1", url: "https://github.com/xiph/rav1e" },
     { archPkg: "glfw", tag: "3.5.1", url: "https://github.com/glfw/glfw" },
     { build: "Custom", tag: "release-78.3", url: "https://github.com/unicode-org/icu" },
     { tag: "v1.1.1", url: "https://github.com/strukturag/libde265" },
@@ -44,8 +47,10 @@ export const LIBRARIES: Library[] = [
         url: "https://github.com/KhronosGroup/OpenCL-ICD-Loader",
     },
     { tag: "v0.7.4", url: "https://github.com/randy408/libspng" },
+    // TODO: Switch to new release when it comes out, fixes CMakeLists dependency discovery
     { tag: "main", url: "https://github.com/libjpeg-turbo/libjpeg-turbo" },
-    { archPkg: "libprojectm", tag: "v4.1.7", url: "https://github.com/projectM-visualizer/projectm" },
+    // TODO: Switch to v4.2.0 when it comes out
+    { archPkg: "libprojectm", tag: "master", url: "https://github.com/projectM-visualizer/projectm" },
     { tag: "v1.6.58", url: "https://github.com/pnggroup/libpng" },
     { tag: "v5.1.8", url: "https://github.com/nuspell/nuspell" },
     {
@@ -61,11 +66,11 @@ export const LIBRARIES: Library[] = [
     { tag: "v4.7.2", url: "https://gitlab.com/libtiff/libtiff" },
     { tag: "v3.4.14", url: "https://github.com/AcademySoftwareFoundation/openexr" },
     { archPkg: "freetype2", tag: "VER-2-14-3", url: "https://gitlab.freedesktop.org/freetype/freetype" },
-    { tag: "v1.9.6", url: "https://github.com/libgit2/libgit2" },
+    { tag: "v1.9.7", url: "https://github.com/libgit2/libgit2" },
 
     // --- Tier 2: depend on Tier 1 libs ---
     { tag: "release-1.4.5", url: "https://github.com/fltk/fltk" },
-    { tag: "14.3.0", url: "https://github.com/harfbuzz/harfbuzz" },
+    { tag: "14.3.1", url: "https://github.com/harfbuzz/harfbuzz" },
     { tag: "v0.12.0", url: "https://github.com/libjxl/libjxl" },
     { tag: "v3.8.9", url: "https://github.com/libarchive/libarchive" },
 
@@ -73,7 +78,7 @@ export const LIBRARIES: Library[] = [
     { tag: "v1.23.1", url: "https://github.com/strukturag/libheif" },
 
     // --- End-user apps, excluded from dependency ordering per instructions ---
-    { build: "Custom", tag: "n9.0", url: "https://github.com/FFmpeg/FFmpeg" },
+    { build: "Custom", tag: "n9.0.1", url: "https://github.com/FFmpeg/FFmpeg" },
     { build: "Custom", tag: "7.1.2-29", url: "https://github.com/imagemagick/imagemagick" },
     { archPkg: "qt6-base", build: "Custom", tag: "v6.11.1", url: "https://github.com/qt/qt5" },
 ];

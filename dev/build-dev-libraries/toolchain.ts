@@ -215,7 +215,6 @@ async function genToolchains(
 }
 
 function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
-    // TODO: Implement CodeView support
     const cflags = [
             ...shared.cflags,
             profile.debugOpt ? "-O3" : "-O0",
@@ -258,7 +257,7 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
         cflags.push(
             "-fsanitize=address",
             "-fsanitize-address-use-after-scope",
-            "-fsanitize-address-use-after-return=always",
+            "-fsanitize-address-use-after-return=runtime",
             "-fsanitize-annotate-debug-info=address",
         );
         ldflags.push("-fsanitize=address");

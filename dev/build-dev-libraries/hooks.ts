@@ -320,12 +320,13 @@ export function arghook(name: string, isDebug: boolean) {
         harfbuzz: `-DHB_BUILD_UTILS=0 -DHB_BUILD_RASTER=0 -DHB_BUILD_VECTOR=0 -DHB_BUILD_GPU=0 -DHB_BUILD_TESTS=0 -DHB_HAVE_CAIRO=OFF -DHB_HAVE_FREETYPE=ON -DHB_HAVE_GRAPHITE2=OFF -DHB_HAVE_GLIB=OFF -DHB_HAVE_ICU=OFF -DHB_HAVE_UNISCRIBE=OFF -DHB_HAVE_GDI=OFF -DHB_HAVE_DIRECTWRITE=ON -DHB_HAVE_GOBJECT=OFF -DHB_HAVE_INTROSPECTION=OFF`,
         highway: `-DHWY_ENABLE_CONTRIB=0 -DHWY_ENABLE_EXAMPLES=0 -DHWY_ENABLE_TESTS=0 -DHWY_FORCE_STATIC_LIBS=${!isDebug}`,
         imath: `-DPYTHON=0 -DPYBIND11=0 -DBUILD_WEBSITE=0 -DIMATH_HALF_USE_LOOKUP_TABLE=1 -DIMATH_USE_DEFAULT_VISIBILITY=0 -DIMATH_ENABLE_LARGE_STACK=0 -DIMATH_USE_NOEXCEPT=0 -DIMATH_INSTALL_PKG_CONFIG=1`,
+        kvazaar: "-DBUILD_TESTS=OFF -DUSE_CRYPTO=OFF -DBUILD_KVAZAAR_BINARY=OFF",
         lcms2: `-DLCMS2_BUILD_TOOLS=0 -DLCMS2_BUILD_TESTS=0 -DLCMS2_BUILD_JPGICC=0 -DLCMS2_BUILD_TIFICC=0 -DLCMS2_BUILD_TIFDIFF=0 -DLCMS2_BUILD_SHARED=${isDebug} -DLCMS2_BUILD_STATIC=${!isDebug}`,
         libarchive: `-DENABLE_MBEDTLS=0 -DENABLE_NETTLE=0 -DENABLE_OPENSSL=0 -DENABLE_LIBB2=0 -DENABLE_LZ4=0 -DENABLE_LZO=0 -DENABLE_LZMA=1 -DENABLE_ZSTD=0 -DENABLE_ZLIB=0 -DENABLE_BZip2=0 -DENABLE_LIBXML2=0 -DENABLE_EXPAT=0 -DENABLE_WIN32_XMLLITE=0 -DENABLE_PCREPOSIX=0 -DENABLE_PCRE2POSIX=0 -DENABLE_LIBGCC=0 -DENABLE_CNG=1 -DENABLE_TAR=0 -DENABLE_CPIO=0 -DENABLE_CAT=0 -DENABLE_UNZIP=0 -DENABLE_XATTR=0 -DENABLE_ACL=0 -DENABLE_ICONV=0 -DENABLE_TEST=0 -DENABLE_COVERAGE=0 -DENABLE_WERROR=0 -DPOSIX_REGEX_LIB=NONE`,
         libde265: `-DUSE_IWYU=0 -DENABLE_SDL=0 -DENABLE_SIMD=1 -DENABLE_AVX2=1 -DENABLE_AVX512=0 -DENABLE_DECODER=0 -DENABLE_ENCODER=0 -DENABLE_SHERLOCK265=0 -DENABLE_INTERNAL_DEVELOPMENT_TOOLS=0 -DWITH_FUZZERS=0 -DFORCE_FULL_VISIBILITY=0`,
         libdeflate: `-DLIBDEFLATE_COMPRESSION_SUPPORT=1 -DLIBDEFLATE_DECOMPRESSION_SUPPORT=1 -DLIBDEFLATE_ZLIB_SUPPORT=1 -DLIBDEFLATE_GZIP_SUPPORT=0 -DLIBDEFLATE_BUILD_GZIP=0 -DLIBDEFLATE_BUILD_TESTS=0 -DLIBDEFLATE_BUILD_STATIC_LIB=${!isDebug} -DLIBDEFLATE_BUILD_SHARED_LIB=${isDebug}`,
         libgit2: `-DBUILD_CLI=OFF -DBUILD_FUZZERS=OFF -DUSE_THREADS=ON -DUSE_NSEC=ON -DUSE_SSH=OFF -DUSE_HTTPS=ON -DREGEX_BACKEND=pcre2 -DDEPRECATE_HARD=ON`,
-        libheif: `-DWITH_EXAMPLES=0 -DWITH_EXAMPLE_HEIF_THUMB=0 -DWITH_EXAMPLE_HEIF_VIEW=0 -DWITH_GDK_PIXBUF=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_LIBDE265=1 -DWITH_X265=0 -DWITH_KVAZAAR=0 -DWITH_UVG266=0 -DWITH_VVDEC=0 -DWITH_VVENC=0 -DWITH_X264=0 -DWITH_OpenH264_DECODER=1 -DWITH_DAV1D=1 -DWITH_AOM_DECODER=0 -DWITH_AOM_ENCODER=0 -DWITH_SvtEnc=0 -DWITH_RAV1E=0 -DWITH_JPEG_DECODER=1 -DWITH_JPEG_ENCODER=0 -DWITH_OpenJPEG_ENCODER=0 -DWITH_OpenJPEG_DECODER=1 -DWITH_FFMPEG_DECODER=0 -DWITH_OPENJPH_ENCODER=0 -DWITH_UNCOMPRESSED_CODEC=0 -DWITH_WEBCODECS=0 -DWITH_LIBSHARPYUV=1 -DBUILD_DOCUMENTATION=0`,
+        libheif: `-DWITH_EXAMPLES=0 -DWITH_EXAMPLE_HEIF_THUMB=0 -DWITH_EXAMPLE_HEIF_VIEW=0 -DWITH_GDK_PIXBUF=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_LIBDE265=1 -DWITH_X265=0 -DWITH_KVAZAAR=1 -DWITH_UVG266=0 -DWITH_VVDEC=0 -DWITH_VVENC=0 -DWITH_X264=0 -DWITH_OpenH264_DECODER=1 -DWITH_DAV1D=1 -DWITH_AOM_DECODER=0 -DWITH_AOM_ENCODER=0 -DWITH_SvtEnc=0 -DWITH_RAV1E=1 -DWITH_JPEG_DECODER=1 -DWITH_JPEG_ENCODER=0 -DWITH_OpenJPEG_ENCODER=0 -DWITH_OpenJPEG_DECODER=1 -DWITH_FFMPEG_DECODER=0 -DWITH_OPENJPH_ENCODER=0 -DWITH_UNCOMPRESSED_CODEC=0 -DWITH_WEBCODECS=0 -DWITH_LIBSHARPYUV=1 -DBUILD_DOCUMENTATION=0`,
         "libjpeg-turbo": `-DWITH_ARITH_DEC=1 -DWITH_ARITH_ENC=1 -DWITH_JAVA=0 -DWITH_JPEG7=0 -DWITH_JPEG8=0 -DWITH_SIMD=1 -DWITH_TURBOJPEG=1 -DWITH_TOOLS=0 -DWITH_TESTS=0 -DWITH_FUZZ=0 -DFORCE_INLINE=1 -DENABLE_SHARED=${isDebug} -DENABLE_STATIC=${!isDebug} -DWITH_SYSTEM_SPNG=1 -DWITH_SYSTEM_ZLIB=1`,
         libjxl: `-DJPEGXL_ENABLE_FUZZERS=0 -DJPEGXL_ENABLE_DEVTOOLS=0 -DJPEGXL_ENABLE_TESTS=0 -DJPEGXL_ENABLE_DOXYGEN=0 -DJPEGXL_ENABLE_MANPAGES=0 -DJPEGXL_ENABLE_BENCHMARK=0 -DJPEGXL_ENABLE_EXAMPLES=0 -DJPEGXL_BUNDLE_LIBPNG=0 -DJPEGXL_ENABLE_JNI=0 -DJPEGXL_ENABLE_SJPEG=0 -DJPEGXL_ENABLE_OPENEXR=1 -DJPEGXL_ENABLE_SKCMS=0 -DJPEGXL_ENABLE_VIEWERS=0 -DJPEGXL_ENABLE_TCMALLOC=0 -DJPEGXL_ENABLE_PLUGINS=0 -DJPEGXL_ENABLE_COVERAGE=0 -DJPEGXL_ENABLE_TRANSCODE_JPEG=1 -DJPEGXL_ENABLE_BOXES=1 -DJPEGXL_WARNINGS_AS_ERRORS=0 -DJPEGXL_TEST_TOOLS=0 -DJPEGXL_ENABLE_WASM_THREADS=0 -DJPEGXL_FORCE_SYSTEM_BROTLI=1 -DJPEGXL_FORCE_SYSTEM_GTEST=1 -DJPEGXL_FORCE_SYSTEM_LCMS2=1 -DJPEGXL_FORCE_SYSTEM_HWY=1 -DJPEGXL_STATIC=${!isDebug}`,
         libpng: `-DPNG_TESTS=0 -DPNG_TOOLS=0 -DPNG_EXECUTABLES=0 -DPNG_HARDWARE_OPTIMIZATIONS=1 -DPNG_BUILD_ZLIB=0 -DPNG_SHARED=${isDebug} -DPNG_STATIC=${!isDebug} -DPNG_DEBUG_POSTFIX=""`,
@@ -344,6 +345,7 @@ export function arghook(name: string, isDebug: boolean) {
         pcre2: `-DPCRE2_BUILD_PCRE2_8=1 -DPCRE2_BUILD_PCRE2_16=1 -DPCRE2_BUILD_PCRE2_32=0 -DPCRE2_STATIC_PIC=0 -DPCRE2_DEBUG=0 -DPCRE2_DISABLE_PERCENT_ZT=1 -DPCRE2_EBCDIC=0 -DPCRE2_EBCDIC_NL25=0 -DPCRE2_EBCDIC_IGNORING_COMPILER=0 -DPCRE2_REBUILD_CHARTABLES=0 -DPCRE2_NEWLINE=LF -DPCRE2_SUPPORT_JIT=1 -DPCRE2_BUILD_PCRE2GREP=0 -DPCRE2_BUILD_TESTS=0 -DPCRE2_SUPPORT_BSR_ANYCRLF=1 -DPCRE2_SUPPORT_UNICODE=1 -DPCRE2GREP_SUPPORT_JIT=0 -DPCRE2GREP_SUPPORT_CALLOUT=0 -DPCRE2GREP_SUPPORT_CALLOUT_FORK=0 -DBUILD_STATIC_LIBS=${!isDebug} -DLIB_POSTFIX=""`,
         projectm: "-DENABLE_DEBUG_POSTFIX=0 -DENABLE_PLAYLIST=0",
         quickjs: `-DQJS_ENABLE_ASAN=0`,
+        rav1e: "--features capi,asm,threading",
         xz: `-DXZ_NLS=0 -DXZ_SMALL=0 -DXZ_TOOL_XZDEC=0 -DXZ_TOOL_LZMADEC=0 -DXZ_TOOL_LZMAINFO=0 -DXZ_TOOL_XZ=0 -DXZ_DOC=0`,
         "zlib-ng": `-DWITH_GTEST=0 -DWITH_FUZZERS=0 -DWITH_BENCHMARKS=0 -DWITH_BENCHMARK_APPS=0 -DWITH_GZFILEOP=0 -DZLIB_COMPAT=1 -DZLIB_ALIASES=1 -DWITH_OPTIM=1 -DWITH_ALL_FALLBACKS=0 -DWITH_REDUCED_MEM=0 -DWITH_NEW_STRATEGIES=1 -DWITH_CRC32_CHORBA=1 -DWITH_NATIVE_INSTRUCTIONS=0 -DWITH_MAINTAINER_WARNINGS=0 -DWITH_CODE_COVERAGE=0 -DWITH_INFLATE_STRICT=0 -DWITH_INFLATE_ALLOW_INVALID_DIST=0 -DINSTALL_UTILS=0`,
         zstd: `-DZSTD_LEGACY_SUPPORT=1 -DZSTD_MULTITHREAD_SUPPORT=1 -DZSTD_BUILD_PROGRAMS=0 -DZSTD_BUILD_CONTRIB=0 -DZSTD_BUILD_TESTS=0 -DZSTD_BUILD_STATIC=${!isDebug} -DZSTD_BUILD_SHARED=${isDebug} -DZSTD_USE_STATIC_RUNTIME=${!isDebug}`,
@@ -422,9 +424,17 @@ export async function posthook(name: string, path: string, options: CliOptions) 
                 await $`sd -s "/// @endcond Doxygen_Suppress" "*/" ${`${DBG_ROOT}/include/Imath/ImathVec.h`}`;
             }
         },
+        kvazaar: async () => {
+            if (WIN) {
+                if (builtRelease && toolchainState().toolchain === "msvc") {
+                    await stripDllImport(`${REL_ROOT}/include/kvazaar.h`);
+                }
+            }
+        },
         libarchive: async () => {
             if (WIN && builtRelease) {
                 await stripDllImport(`${REL_ROOT}/include/archive.h`);
+                await stripDllImport(`${REL_ROOT}/include/archive_entry.h`);
             }
         },
         libde265: async () => {
@@ -527,6 +537,13 @@ export async function posthook(name: string, path: string, options: CliOptions) 
                 }
             }
         },
+        openjpeg: async () => {
+            if (WIN) {
+                if (builtRelease && toolchainState().toolchain === "msvc") {
+                    await stripDllImport(`${REL_ROOT}/include/openjpeg-2.5/openjpeg.h`);
+                }
+            }
+        },
         pcre2: async () => {
             if (WIN && builtRelease) {
                 await stripDllImport(`${REL_ROOT}/include/pcre2.h`);
@@ -543,6 +560,13 @@ export async function posthook(name: string, path: string, options: CliOptions) 
                     await $`cp ${`${DBG_ROOT}/lib/libpcre2-8d.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-8.dll.a`}`;
                     await $`cp ${`${DBG_ROOT}/lib/libpcre2-16d.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-16.dll.a`}`;
                     await $`cp ${`${DBG_ROOT}/lib/libpcre2-posixd.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-posix.dll.a`}`;
+                }
+            }
+        },
+        rav1e: async () => {
+            if (builtDebug) {
+                if (toolchainState().toolchain === "msvc") {
+                    await $`mv ${`${DBG_ROOT}/lib/rav1e.dll.lib`} ${`${DBG_ROOT}/lib/rav1e.lib`}`;
                 }
             }
         },
@@ -655,6 +679,11 @@ export async function prehook(name: string, path: string) {
                 );
             }
         },
+        kvazaar: async () => {
+            if (toolchainState().toolchain === "msvc") {
+                await $`git apply ${`${ROOT}/patches/kvazaar-cmakelists.patch`}`.cwd(path);
+            }
+        },
         libarchive: async () => {
             await $`cp ${`${ROOT}/patches/libarchive/CMakeLists.txt`} libarchive/CMakeLists.txt`.cwd(path);
         },
@@ -706,7 +735,6 @@ export async function prehook(name: string, path: string) {
                 );
             }
         },
-
         "zlib-ng": async () => {
             await $`sd -s -- "set(NOLTOFLAG \${ZNOLTOFLAG})" "" CMakeLists.txt`.cwd(path);
         },
@@ -769,7 +797,7 @@ async function buildAutoconf(
         }
     }
 
-    await bash`cd ${msysPath} && ${extraEnv} ${path.includes("icu") && toolchain === "msvc" ? `MSYS2_ARG_CONV_EXCL="*"` : ""} make -j2 && make install`;
+    await bash`cd ${msysPath} && ${extraEnv} ${path.includes("icu") && toolchain === "msvc" ? `MSYS2_ARG_CONV_EXCL="*"` : ""} make -j && make install`;
 }
 
 async function buildPlain(
@@ -884,4 +912,10 @@ export async function buildMeson(name: string, path: string, isDebug: boolean) {
     await $`meson setup ${dir} --native-file=${native} ${raw(arghook(name, isDebug))}`.cwd(path);
     await $`meson compile -C ${dir}`.cwd(path);
     await $`meson install -C ${dir}`.cwd(path);
+}
+
+export async function buildRust(name: string, path: string, isDebug: boolean) {
+    await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(isDebug ? "--debug" : "--release")} --no-default-features ${raw(arghook(name, isDebug))} --prefix=${isDebug ? DBG_ROOT : REL_ROOT}`.cwd(
+        path,
+    );
 }

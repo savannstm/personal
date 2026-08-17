@@ -5,7 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
 import { BUILD_STATE_FILE, buildRoot, DBG_ROOT, REL_ROOT, REPOS_ROOT, WIN } from "./config.ts";
-import { buildCMake, buildMeson, customBuild, posthook, prehook } from "./hooks.ts";
+import { buildCMake, buildMeson, buildRust, customBuild, posthook, prehook } from "./hooks.ts";
 import { getPin, LIBRARIES, resolveLibraryName, shouldBuildLibrary } from "./libraries.ts";
 import { configureToolchain, updateEnv } from "./toolchain.ts";
 
@@ -115,6 +115,9 @@ async function buildVariants(
                 break;
             case "Meson":
                 await buildMeson(library.name!, path, isDebug);
+                break;
+            case "Rust":
+                await buildRust(library.name!, path, isDebug);
                 break;
             default:
                 await buildCMake(library.name!, path, library.sourceSubdir ?? "", isDebug);

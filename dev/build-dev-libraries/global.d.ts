@@ -88,7 +88,7 @@ interface PlainArgs {
 }
 interface Library {
     archiveSubdir?: string;
-    build?: "CMake" | "Custom" | "Meson";
+    build?: "CMake" | "Custom" | "Meson" | "Rust";
     name?: string;
     sourceSubdir?: string;
     tag: string;
