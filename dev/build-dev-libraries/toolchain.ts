@@ -218,7 +218,7 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
     const cflags = [
             ...shared.cflags,
             profile.debugOpt ? "-O3" : "-O0",
-            "-g3",
+            "-g2",
             "-gdwarf-5",
             "-glldb",
             "-gcolumn-info",

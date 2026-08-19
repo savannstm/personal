@@ -1,9 +1,11 @@
 export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
     { name: "opencl-headers", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-Headers" },
-    { tag: "v8.0.0", url: "https://github.com/stephenberry/glaze" },
+    { tag: "v8.1.0", url: "https://github.com/stephenberry/glaze" },
     { tag: "v8.2.10", url: "https://github.com/fastfloat/fast_float" },
+    { tag: "v0.11.25", url: "https://github.com/mackron/miniaudio" },
 
+    { tag: "v3.4.5", url: "https://github.com/microsoft/mimalloc" },
     { build: "Custom", tag: "v2.6.2", url: "https://github.com/autotools-mirror/libtool" },
     { build: "Custom", tag: "bzip2-1.0.8", url: "https://sourceware.org/git/bzip2", version: "1.0.8" },
 
@@ -80,7 +82,7 @@ export const LIBRARIES: Library[] = [
     // --- End-user apps, excluded from dependency ordering per instructions ---
     { build: "Custom", tag: "n9.0.1", url: "https://github.com/FFmpeg/FFmpeg" },
     { build: "Custom", tag: "7.1.2-29", url: "https://github.com/imagemagick/imagemagick" },
-    { archPkg: "qt6-base", build: "Custom", tag: "v6.11.1", url: "https://github.com/qt/qt5" },
+    { archPkg: "qt6-base", build: "Custom", tag: "v6.11.2", url: "https://github.com/qt/qt5" },
 ];
 
 export function resolveLibraryName(library: Library) {
