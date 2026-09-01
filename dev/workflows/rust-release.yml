@@ -1,0 +1,69 @@
+name: Rust Release Build (Debian)
+
+on:
+    push:
+        tags:
+            - "v*"
+    workflow_dispatch:
+
+jobs:
+    build-debian:
+        runs-on: ubuntu-latest
+        env:
+            CC: clang-20
+            CXX: clang++-20
+            LANG: en_US.UTF-8
+            LC_ALL: en_US.UTF-8
+            RUSTFLAGS: >-
+                -Ctarget-cpu=x86-64-v3
+                -Ctarget-feature=+aes,+sse2
+                -Copt-level=3
+                -Ccodegen-units=1
+                -Cpanic=abort
+                -Cstrip=symbols
+                -Cdebuginfo=0
+                -Clinker=clang-20
+                -Clinker-features=-lld
+                -Clink-arg=-fuse-ld=lld
+                -Cprefer-dynamic=no
+                -Cllvm-args=-function-sections=true
+                -Cllvm-args=-data-sections=true
+                -Cllvm-args=-fp-contract=fast
+                -Cllvm-args=-denormal-fp-math=positive-zero
+                -Cllvm-args=-enable-no-trapping-fp-math=true
+                -Cllvm-args=-unroll-threshold=750
+        container:
+            image: debian:trixie
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Install dependencies
+              run: |
+                  apt-get update && apt-get install -y \
+                    build-essential clang-20 lld-20 llvm-20-tools libclang-common-20-dev \
+                    curl ca-certificates locales pkgconf git
+
+            - name: Set locale
+              run: |
+                  sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
+                  locale-gen
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache Rust
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: .
+
+            - name: Build release
+
+              run: |
+                  cargo build --release
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v7
+              with:
+                  name: rust-debian-release
+                  path: target/release/*
+                  retention-days: 30

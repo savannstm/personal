@@ -24,6 +24,7 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     projectm: { asan: false, debugOpt: false, fastmath: false, rtti: false },
     qt5: { asan: true, debugOpt: false, fastmath: true, rtti: true },
     "quickjs-ng": { asan: false, debugOpt: true, fastmath: false, rtti: false },
+    upx: { asan: false, debugOpt: true, fastmath: true, march: "native", mtune: "native", rtti: true },
 };
 
 export async function buildRepos(options: CliOptions) {

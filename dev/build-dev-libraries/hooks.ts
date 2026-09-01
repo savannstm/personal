@@ -149,7 +149,7 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
                     "--enable-decoder=aac,mp3,mp3float,opus,vorbis,flac,alac,ac3,eac3,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le --enable-demuxer=mov,matroska,ogg,wav,flac,mp3,aac,ac3,avi --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis --enable-filter=aformat,firequalizer,aresample,alimiter",
                 common = `--target-os=${WIN ? (toolchain === "msvc" ? "win64" : "mingw32") : "linux"} --arch=x86_64 ${toolchain === "msvc" ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --nm=${NM} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
                 rpgCodecs =
-                    "--enable-demuxer=ogg,mov --enable-decoder=vorbis,theora,aac,opus,h264,vp9 --enable-parser=aac,h264,vp9";
+                    "--enable-demuxer=ogg,mov,wav --enable-decoder=vorbis,theora,aac,opus,h264,vp9,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le --enable-parser=aac,h264,vp9";
 
             let variants;
 
@@ -212,13 +212,17 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.c`} MagickCore/pocketfft.c`.cwd(p);
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.h`} MagickCore/pocketfft.h`.cwd(p);
 
-            await buildAutoconf(
-                p,
-                isDebug,
-                libRoot,
-                `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=8 --without-modules --without-utilities --disable-docs --disable-hdri --disable-deprecated --without-perl --with-ltdl ` +
-                    "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --without-uhdr --without-wmf --without-x --without-gdi32",
-            );
+            for (const quantum of [8, 16]) {
+                for (const hdr of ["enable", "disable"]) {
+                    await buildAutoconf(
+                        p,
+                        isDebug,
+                        libRoot,
+                        `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${quantum} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
+                            "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --without-uhdr --without-wmf --without-x --without-gdi32",
+                    );
+                }
+            }
         },
         libraw: async () => {
             if (!WIN) {
@@ -274,7 +278,7 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
         },
         qt5: async () => {
             const submodules = ["qtbase", "qtimageformats", "qttools", "qtsvg"],
-                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${toolchainState().toolchain === "msvc" ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus -no-ssl -no-openssl -no-schannel -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-no-opengl"}`,
+                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${toolchainState().toolchain === "msvc" ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-no-opengl"}`,
                 featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-run-opengl-tests -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -no-feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
 
             await $`git submodule update --init --depth 1 ${submodules}`.cwd(p);
@@ -285,6 +289,10 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
                     await $`sd -s "add_dependencies(Core qmodule_pri)" ${`add_dependencies(Core qmodule_pri)\ntarget_link_options(Core PRIVATE "-Wl,-FORCE:UNRESOLVED")`} qtbase/src/corelib/CMakeLists.txt`.cwd(
                         p,
                     );
+
+                    // Qt 6.11.2 manifest that generates asm.v2 is incompatible
+                    // with LLD's manifest merging logic
+                    await $`sd -s "asm.v2" "asm.v3" qtbase/src/corelib/Qt6CoreMacros.cmake`.cwd(p);
                 }
 
                 await $`./configure${raw(WIN ? ".bat" : "")} ${raw(common)} -debug -sanitize address -no-static -no-static-runtime ${raw(featureToggles)} -- -B=debug -DCMAKE_TOOLCHAIN_FILE=${DEBUG_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
@@ -720,6 +728,14 @@ export async function prehook(name: string, path: string) {
                 );
             }
         },
+        mimalloc: async () => {
+            // 3.5.0 regression: _mi_aligned_ptr_page loads a pointer atomic through the
+            // uintptr_t-only MSVC-C wrapper instead of mi_atomic_load_ptr_acquire; fails to
+            // compile under _MSC_VER (real cl.exe or clang targeting the MSVC ABI).
+            await $`sd -s -- "mi_atomic_load_acquire(&page->self)" "mi_atomic_load_ptr_acquire(mi_page_t, &page->self)" include/mimalloc/internal.h`.cwd(
+                path,
+            );
+        },
         openexr: async () => {
             await $`sd -s -- "add_subdirectory(website/src)" "" CMakeLists.txt`.cwd(path);
         },
@@ -727,6 +743,9 @@ export async function prehook(name: string, path: string) {
             await $`git submodule update --depth 1 --init sljit`.cwd(`${path}/deps`);
         },
         projectm: async () => {
+            await $`git submodule update --depth 1 --init --recursive`.cwd(path);
+        },
+        upx: async () => {
             await $`git submodule update --depth 1 --init --recursive`.cwd(path);
         },
         xz: async () => {
@@ -798,7 +817,7 @@ async function buildAutoconf(
         }
     }
 
-    await bash`cd ${msysPath} && ${extraEnv} ${path.includes("icu") && toolchain === "msvc" ? `MSYS2_ARG_CONV_EXCL="*"` : ""} make -j && make install`;
+    await bash`cd ${msysPath} && ${extraEnv} ${path.includes("icu") && toolchain === "msvc" ? `MSYS2_ARG_CONV_EXCL="*"` : ""} make -j4 && make install`;
 }
 
 async function buildPlain(

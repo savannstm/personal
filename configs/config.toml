@@ -1,0 +1,126 @@
+[unstable]
+build-std = ["core", "alloc", "std", "panic_abort"]
+profile-rustflags = true
+
+[target.x86-64-pc-windows-msvc]
+rustflags = [
+    "-Zunstable-options",
+    "-Clinker=lld-link",
+    "-Clinker-features=-lld",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+]
+
+[profile.win-debug]
+inherits = "dev"
+rustflags = [
+    "-Zunstable-options",
+    "-Clinker=lld-link",
+    "-Clinker-features=-lld",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+
+    "-Clink-arg=-DEBUG:FULL",
+    "-Clink-arg=-OPT:NOREF",
+    "-Clink-arg=-OPT:NOICF",
+    "-Clink-arg=-OPT:NOLBR",
+]
+
+[profile.win-release]
+inherits = "release"
+lto = "fat"
+debug = false
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+rustflags = [
+    "-Zunstable-options",
+    "-Clinker=lld-link",
+    "-Clinker-features=-lld",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+    "-Zdylib-lto",
+    "-Cpanic=abort",
+    "-Cprefer-dynamic=no",
+    "-Ctarget-feature=+crt-static",
+    "-Clinker-plugin-lto",
+    "-Cembed-bitcode=yes",
+    "-Ccodegen-units=1",
+    "-Copt-level=3",
+    "-Cstrip=symbols",
+    "-Cdebuginfo=0",
+    "-Zdefault-visibility=hidden",
+
+    "-Cllvm-args=-function-sections=true",
+    "-Cllvm-args=-data-sections=true",
+    "-Cllvm-args=-fp-contract=fast",
+    "-Cllvm-args=-denormal-fp-math=positive-zero",
+    "-Cllvm-args=-enable-no-trapping-fp-math=true",
+    "-Cllvm-args=-unroll-threshold=750",
+
+    "-Clink-arg=-DEBUG:NONE",
+    "-Clink-arg=-LTCG",
+    "-Clink-arg=-OPT:REF",
+    "-Clink-arg=-OPT:ICF=10",
+    "-Clink-arg=-OPT:LBR",
+    "-Clink-arg=-INCREMENTAL:NO",
+    "-Clink-arg=-SAFESEH:NO",
+    "-Clink-arg=-EMITTOOLVERSIONINFO:NO",
+    "-Clink-arg=-NOCOFFGRPINFO",
+    "-Clink-arg=-EMITPOGOPHASEINFO",
+    "-Clink-arg=-EMITVOLATILEMETADATA:NO",
+]
+
+[profile.linux-debug]
+inherits = "dev"
+rustflags = [
+    "-Clinker=clang",
+    "-Clinker-features=-lld",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+]
+
+[profile.linux-release]
+inherits = "release"
+lto = "fat"
+debug = false
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+rustflags = [
+    "-Clinker=clang",
+    "-Clinker-features=-lld",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+    "-Cpanic=abort",
+    "-Cprefer-dynamic=no",
+    "-Ccodegen-units=1",
+    "-Copt-level=3",
+    "-Cstrip=symbols",
+    "-Cdebuginfo=0",
+
+    "-Cllvm-args=-function-sections=true",
+    "-Cllvm-args=-data-sections=true",
+    "-Cllvm-args=-fp-contract=fast",
+    "-Cllvm-args=-denormal-fp-math=positive-zero",
+    "-Cllvm-args=-enable-no-trapping-fp-math=true",
+    "-Cllvm-args=-unroll-threshold=750",
+
+    "-Clink-arg=-Wl,-O3",
+    "-Clink-arg=-Wl,--lto-O3",
+    "-Clink-arg=-Wl,--gc-sections",
+    "-Clink-arg=-Wl,--as-needed",
+    "-Clink-arg=-Wl,--strip-all",
+    "-Clink-arg=-Wl,--build-id=none",
+    "-Clink-arg=-Wl,--icf=all",
+
+    "-Clink-arg=-Wl,-z,now",
+    "-Clink-arg=-Wl,-z,norelro",
+    "-Clink-arg=-Wl,-z,nosectionheader",
+]

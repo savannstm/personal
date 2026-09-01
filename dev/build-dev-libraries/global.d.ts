@@ -16,6 +16,8 @@ interface ToolchainProfile {
     rtti: boolean;
     debugOpt: boolean;
     fastmath: boolean;
+    march?: string;
+    mtune?: string;
 }
 
 interface BuildEntry {

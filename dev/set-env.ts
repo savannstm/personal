@@ -129,7 +129,7 @@ async function buildMsvcCommand(): Promise<string> {
     const newPath = [...binDirs, process.env.PATH ?? ""].join(";");
 
     return [
-        "rustup default nightly-msvc",
+        "rustup default nightly-2026-08-03",
         `$env:INCLUDE=${quote(includeDirs.join(";"))}`,
         `$env:LIB=${quote(libDirs.join(";"))}`,
         `$env:PATH=${quote(newPath)}`,

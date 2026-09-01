@@ -1,11 +1,10 @@
 export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
     { name: "opencl-headers", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-Headers" },
-    { tag: "v8.1.0", url: "https://github.com/stephenberry/glaze" },
+    { tag: "v8.3.0", url: "https://github.com/stephenberry/glaze" },
     { tag: "v8.2.10", url: "https://github.com/fastfloat/fast_float" },
-    { tag: "v0.11.25", url: "https://github.com/mackron/miniaudio" },
 
-    { tag: "v3.4.5", url: "https://github.com/microsoft/mimalloc" },
+    { tag: "v3.5.0", url: "https://github.com/microsoft/mimalloc" },
     { build: "Custom", tag: "v2.6.2", url: "https://github.com/autotools-mirror/libtool" },
     { build: "Custom", tag: "bzip2-1.0.8", url: "https://sourceware.org/git/bzip2", version: "1.0.8" },
 
@@ -15,7 +14,7 @@ export const LIBRARIES: Library[] = [
     { tag: "v1.2.0", url: "https://github.com/google/brotli" },
     { tag: "1.4.0", url: "https://github.com/google/highway" },
     { tag: "v5.8.3", url: "https://github.com/tukaani-project/xz" },
-    { tag: "v1.25", url: "https://github.com/ebiggers/libdeflate" },
+    { tag: "v1.26", url: "https://github.com/ebiggers/libdeflate" },
 
     {
         archiveSubdir: "glew-2.3.1",
@@ -26,11 +25,11 @@ export const LIBRARIES: Library[] = [
         version: "2.3.1",
     },
     { tag: "release-0.5.3", url: "https://github.com/mity/md4c" },
-    { archPkg: "quickjs-ng", tag: "v0.16.1", url: "https://github.com/quickjs-ng/quickjs" },
+    { archPkg: "quickjs-ng", tag: "v0.16.2", url: "https://github.com/quickjs-ng/quickjs" },
     { tag: "pcre2-10.47", url: "https://github.com/PCRE2Project/pcre2", version: "10.47" },
     { archPkg: "openjpeg2", tag: "v2.5.4", url: "https://github.com/uclouvain/openjpeg" },
     { tag: "0.31.0", url: "https://github.com/aous72/OpenJPH" },
-    { tag: "v3.2.2", url: "https://github.com/AcademySoftwareFoundation/imath" },
+    { tag: "v3.2.3", url: "https://github.com/AcademySoftwareFoundation/imath" },
     { name: "lcms2", tag: "lcms2.19.1", url: "https://github.com/mm2/Little-CMS" },
     { build: "Meson", tag: "v2.6.0", url: "https://github.com/cisco/openh264" },
     { build: "Meson", tag: "1.5.4", url: "https://code.videolan.org/videolan/dav1d" },
@@ -66,23 +65,24 @@ export const LIBRARIES: Library[] = [
     { tag: "v2.15.3", url: "https://gitlab.gnome.org/GNOME/libxml2" },
     { tag: "v1.11.4", url: "https://github.com/nih-at/libzip/" },
     { tag: "v4.7.2", url: "https://gitlab.com/libtiff/libtiff" },
-    { tag: "v3.4.14", url: "https://github.com/AcademySoftwareFoundation/openexr" },
+    { tag: "v3.4.15", url: "https://github.com/AcademySoftwareFoundation/openexr" },
     { archPkg: "freetype2", tag: "VER-2-14-3", url: "https://gitlab.freedesktop.org/freetype/freetype" },
     { tag: "v1.9.7", url: "https://github.com/libgit2/libgit2" },
 
     // --- Tier 2: depend on Tier 1 libs ---
     { tag: "release-1.4.5", url: "https://github.com/fltk/fltk" },
-    { tag: "14.3.1", url: "https://github.com/harfbuzz/harfbuzz" },
+    { tag: "14.4.0", url: "https://github.com/harfbuzz/harfbuzz" },
     { tag: "v0.12.0", url: "https://github.com/libjxl/libjxl" },
     { tag: "v3.8.9", url: "https://github.com/libarchive/libarchive" },
 
     // --- Tier 3: depends on Tier 2/1 ---
-    { tag: "v1.23.1", url: "https://github.com/strukturag/libheif" },
+    { tag: "v1.23.2", url: "https://github.com/strukturag/libheif" },
 
     // --- End-user apps, excluded from dependency ordering per instructions ---
     { build: "Custom", tag: "n9.0.1", url: "https://github.com/FFmpeg/FFmpeg" },
-    { build: "Custom", tag: "7.1.2-29", url: "https://github.com/imagemagick/imagemagick" },
+    { build: "Custom", tag: "7.1.2-30", url: "https://github.com/imagemagick/imagemagick" },
     { archPkg: "qt6-base", build: "Custom", tag: "v6.11.2", url: "https://github.com/qt/qt5" },
+    { archPkg: "upx", tag: "v5.2.1", url: "https://github.com/upx/upx" },
 ];
 
 export function resolveLibraryName(library: Library) {

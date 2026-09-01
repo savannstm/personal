@@ -185,7 +185,7 @@ async function genToolchains(
     options: CliOptions,
     profile: ToolchainProfile = { asan: false, debugOpt: true, fastmath: true, rtti: false },
 ): Promise<Conf> {
-    const shared = buildShared(options.toolchain),
+    const shared = buildShared(options.toolchain, profile),
         debug = buildDebug(options, shared, profile),
         release = buildRelease(options, shared, profile),
         tools = getTools(options.toolchain);
@@ -290,8 +290,6 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         "-fno-trapping-math",
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
-        "-fno-exceptions",
-        "-fno-cxx-exceptions",
         "-Qn",
     ];
 
@@ -359,9 +357,11 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     };
 }
 
-function buildShared(toolchain: Toolchain): Shared {
-    const cflags = ["-pipe", "-march=x86-64-v3", "-w", "-fopenmp"],
-        ldflags = ["-march=x86-64-v3", "-fopenmp"];
+function buildShared(toolchain: Toolchain, profile: ToolchainProfile): Shared {
+    const march = profile.march ?? "x86-64-v3",
+        mtune = profile.mtune ?? "generic",
+        cflags = ["-pipe", `-march=${march}`, `-mtune=${mtune}`, "-w", "-fopenmp", "-lclang_rt.builtins-x86_64"],
+        ldflags = [`-march=${march}`, `-mtune=${mtune}`, "-fopenmp", "-lclang_rt.builtins-x86_64"];
 
     cflags.push("-fuse-ld=lld");
     ldflags.push("-fuse-ld=lld");

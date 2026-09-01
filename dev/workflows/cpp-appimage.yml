@@ -1,0 +1,117 @@
+name: C++ AppImage Release Build
+
+on:
+    push:
+        tags:
+            - "v*"
+    workflow_dispatch:
+
+jobs:
+    build-appimage:
+        runs-on: ubuntu-24.04
+        env:
+            CC: clang-20
+            CXX: clang++-20
+            LD: clang-20
+            AR: llvm-ar-20
+            RANLIB: llvm-ranlib-20
+            NM: llvm-nm-20
+            STRIP: llvm-strip-20
+            OBJCOPY: llvm-objcopy-20
+            OBJDUMP: llvm-objdump-20
+            READELF: llvm-readelf-20
+            LANG: en_US.UTF-8
+            LC_ALL: en_US.UTF-8
+            CFLAGS: >-
+                -march=x86-64-v3
+                -O3
+                -fuse-ld=lld
+                -fmerge-all-constants
+                -ffunction-sections
+                -fdata-sections
+                -fno-math-errno
+                -fno-trapping-math
+                -fvisibility=hidden
+                -fvisibility-inlines-hidden
+                -pipe
+            CXXFLAGS: >-
+                -march=x86-64-v3
+                -O3
+                -fuse-ld=lld
+                -fmerge-all-constants
+                -ffunction-sections
+                -fdata-sections
+                -fno-math-errno
+                -fno-trapping-math
+                -fvisibility=hidden
+                -fvisibility-inlines-hidden
+                -pipe
+            LDFLAGS: >-
+                -Wl,-O3
+                -Wl,--gc-sections
+                -Wl,--as-needed
+                -Wl,--strip-all
+                -Wl,--build-id=none
+                -Wl,--icf=all
+                -Wl,-z,now
+                -Wl,-z,norelro
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Install base dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    build-essential make cmake ninja-build libc6-dev dpkg-dev \
+                    clang-20 libclang-common-20-dev lld-20 llvm-20-tools \
+                    libfuse2 file patchelf curl ca-certificates locales pkgconf git
+
+            - name: Set locale
+              run: |
+                  sudo sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
+                  sudo locale-gen
+
+            - name: Install linuxdeploy
+              run: |
+                  wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+                    -O /tmp/linuxdeploy
+                  chmod +x /tmp/linuxdeploy
+                  cd /tmp
+                  APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy --appimage-extract
+                  mv squashfs-root linuxdeploy.appdir
+                  ln -s linuxdeploy.appdir/AppRun linuxdeploy
+                  echo "/tmp" >> $GITHUB_PATH
+
+            - name: Cache CMake build
+              uses: actions/cache@v6
+              with:
+                  path: build
+                  key: cpp-appimage-cmake-build-${{ github.sha }}
+                  restore-keys: cpp-appimage-cmake-build-
+
+            - name: Build release
+              run: |
+                  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+                  cmake --build build -j $(nproc)
+
+            - name: Create AppImage
+              run: |
+                  APP_NAME="your-app-name"
+                  APP_BINARY="build/target/bin/your-app-binary"
+                  DESKTOP_FILE="${APP_NAME}.desktop"
+                  ICON_FILE="icons/${APP_NAME}-logo.png"
+
+                  APPIMAGE_EXTRACT_AND_RUN=1 \
+                  linuxdeploy \
+                    --appdir AppDir \
+                    --executable "$APP_BINARY" \
+                    --desktop-file "$DESKTOP_FILE" \
+                    --icon-file "$ICON_FILE" \
+                    --output appimage
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v7
+              with:
+                  name: cpp-appimage-release
+                  path: "*.AppImage*"
+                  retention-days: 30
