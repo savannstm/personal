@@ -219,7 +219,7 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
                         isDebug,
                         libRoot,
                         `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${quantum} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
-                            "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --without-uhdr --without-wmf --without-x --without-gdi32",
+                            "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
                     );
                 }
             }
@@ -340,10 +340,12 @@ export function arghook(name: string, isDebug: boolean) {
         libpng: `-DPNG_TESTS=0 -DPNG_TOOLS=0 -DPNG_EXECUTABLES=0 -DPNG_HARDWARE_OPTIMIZATIONS=1 -DPNG_BUILD_ZLIB=0 -DPNG_SHARED=${isDebug} -DPNG_STATIC=${!isDebug} -DPNG_DEBUG_POSTFIX=""`,
         libspng: `-DENABLE_OPT=ON -DSPNG_SHARED=${isDebug} -DSPNG_STATIC=${!isDebug}`,
         libtiff: `-Dtiff-tools=0 -Dtiff-tests=0 -Dtiff-contrib=0 -Dtiff-docs=0 -Dtiff-deprecated=0 -Dtiff-static=${!isDebug} -Dlerc=0 -Djbig=0 -DTIFF_STATIC_LIBS_DEFAULT=${!isDebug}`,
+        libultrahdr: `-DUHDR_BUILD_EXAMPLES=0 -DUHDR_ENABLE_INTRINSICS=1 -DUHDR_ENABLE_GLES=1 -DUHDR_ENABLE_HEIF=0`,
         libwebp: `-DWEBP_ENABLE_SIMD=1 -DWEBP_BUILD_ANIM_UTILS=0 -DWEBP_BUILD_CWEBP=0 -DWEBP_BUILD_DWEBP=0 -DWEBP_BUILD_GIF2WEBP=0 -DWEBP_BUILD_IMG2WEBP=0 -DWEBP_BUILD_VWEBP=0 -DWEBP_BUILD_WEBPINFO=0 -DWEBP_BUILD_LIBWEBPMUX=1 -DWEBP_BUILD_WEBPMUX=0 -DWEBP_BUILD_EXTRAS=0 -DWEBP_BUILD_FUZZTEST=0 -DWEBP_USE_THREAD=1 -DWEBP_NEAR_LOSSLESS=1 -DWEBP_ENABLE_SWAP_16BIT_CSP=0 -DWEBP_ENABLE_WUNUSED_RESULT=0 -DWEBP_BUILD_WEBP_JS=0 -DWEBP_UNICODE=0 -DWEBP_LINK_STATIC=${!isDebug}`,
         libxml2: `-DLIBXML2_WITH_CATALOG=0 -DLIBXML2_WITH_DEBUG=0 -DLIBXML2_WITH_DOCS=0 -DLIBXML2_WITH_HTML=0 -DLIBXML2_WITH_HTTP=0 -DLIBXML2_WITH_ICONV=0 -DLIBXML2_WITH_ICU=0 -DLIBXML2_WITH_ISO8859X=1 -DLIBXML2_WITH_LEGACY=0 -DLIBXML2_WITH_MODULES=0 -DLIBXML2_WITH_OUTPUT=1 -DLIBXML2_WITH_PATTERN=0 -DLIBXML2_WITH_PROGRAMS=0 -DLIBXML2_WITH_PUSH=1 -DLIBXML2_WITH_PYTHON=0 -DLIBXML2_WITH_READLINE=0 -DLIBXML2_WITH_REGEXPS=0 -DLIBXML2_WITH_SAX1=1 -DLIBXML2_WITH_TESTS=0 -DLIBXML2_WITH_TLS=0 -DLIBXML2_WITH_VALID=0 -DLIBXML2_WITH_XINCLUDE=0 -DLIBXML2_WITH_XPATH=0 -DLIBXML2_WITH_ZLIB=1 -DLIBXML2_WITH_C14N=0 -DLIBXML2_WITH_HISTORY=0 -DLIBXML2_WITH_READER=1 -DLIBXML2_WITH_SCHEMAS=0 -DLIBXML2_WITH_SCHEMATRON=0 -DLIBXML2_WITH_THREAD_ALLOC=1 -DLIBXML2_WITH_WRITER=1 -DLIBXML2_WITH_XPTR=0 -DLIBXML2_WITH_RELAXNG=0 -DLIBXML2_WITH_THREADS=1`,
         libzip: `-DENABLE_COMMONCRYPTO=0 -DENABLE_GNUTLS=0 -DENABLE_MBEDTLS=0 -DENABLE_OPENSSL=0 -DENABLE_WINDOWS_CRYPTO=0 -DENABLE_BZIP2=1 -DENABLE_LZMA=1 -DENABLE_ZSTD=1 -DENABLE_FDOPEN=1 -DBUILD_REGRESS=0 -DBUILD_OSSFUZZ=0`,
         md4c: "-DBUILD_MD2HTML_EXECUTABLE=0",
+        mesa: `-Dplatforms=windows -Degl=enabled -Degl-native-platform=surfaceless -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglx=disabled -Dgallium-drivers=d3d12 -Dgallium-d3d12-graphics=enabled -Dgallium-d3d12-video=disabled -Dvulkan-drivers= -Dllvm=disabled -Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzlib=disabled -Dzstd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Ddisplay-info=disabled -Dmicrosoft-clc=disabled -Dspirv-to-dxil=false -Dbuild-tests=false -Dhtml-docs=disabled -Dmin-windows-version=10`,
         mimalloc: `-DMI_OPT_ARCH=1 -DMI_OPT_SIMD=1 -DMI_SECURE=${isDebug} -DMI_SECURE_FULL=${isDebug} -DMI_OVERRIDE=1 -DMI_XMALLOC=0 -DMI_SHOW_ERRORS=${isDebug} -DMI_GUARDED=${isDebug} -DMI_FREE_IS_CHECKED=${isDebug} -DMI_DEBUG=${isDebug} -DMI_DEBUG_INTERNAL=${isDebug} -DMI_DEBUG_FULL=${isDebug} -DMI_BUILD_SHARED=${isDebug} -DMI_BUILD_STATIC=${!isDebug} -DMI_BUILD_OBJECT=0 -DMI_BUILD_TESTS=0`,
         "opencl-headers": `-DOPENCL_HEADERS_BUILD_TESTING=0 -DOPENCL_HEADERS_BUILD_CXX_TESTS=0`,
         "opencl-icd": `-DOPENCL_ICD_LOADER_BUILD_TESTING=0 -DENABLE_OPENCL_LAYERINFO=0`,
@@ -728,13 +730,76 @@ export async function prehook(name: string, path: string) {
                 );
             }
         },
-        mimalloc: async () => {
-            // 3.5.0 regression: _mi_aligned_ptr_page loads a pointer atomic through the
-            // uintptr_t-only MSVC-C wrapper instead of mi_atomic_load_ptr_acquire; fails to
-            // compile under _MSC_VER (real cl.exe or clang targeting the MSVC ABI).
-            await $`sd -s -- "mi_atomic_load_acquire(&page->self)" "mi_atomic_load_ptr_acquire(mi_page_t, &page->self)" include/mimalloc/internal.h`.cwd(
-                path,
-            );
+        libultrahdr: async () => {
+            if (WIN) {
+                await $`sd -s -- ${"if(MSVC AND NOT BUILD_SHARED_LIBS)"} ${"if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)"} CMakeLists.txt`.cwd(
+                    path,
+                );
+                await $`sd -s -- ${"if(BUILD_SHARED_LIBS AND NOT MSVC)"} ${"if(BUILD_SHARED_LIBS AND NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
+                    path,
+                );
+                await $`sd -s -- ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT MSVC)"} ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
+                    path,
+                );
+                await $`sd -s -- ${"$<$<CONFIG:Debug>:Debug>"} "" CMakeLists.txt`.cwd(path);
+            }
+        },
+        mesa: async () => {
+            if (toolchainState().toolchain === "msvc") {
+                await $`sd -s -- "_interlockedexchange64" "_InterlockedExchange64" src/util/u_atomic.h`.cwd(path);
+                await $`sd -s -- "_interlockedexchangeadd64" "_InterlockedExchangeAdd64" src/util/u_atomic.h`.cwd(path);
+                await $`sd -s -- "_interlockeddecrement64" "_InterlockedDecrement64" src/util/u_atomic.h`.cwd(path);
+                await $`sd -s -- "_interlockedincrement64" "_InterlockedIncrement64" src/util/u_atomic.h`.cwd(path);
+                // _InterlockedAdd/_InterlockedAdd8/_InterlockedAdd16/64 are ARM64-only
+                // intrinsics and aren't defined for x86_64; rewrite p_atomic_add_return
+                // to use the (defined) ExchangeAdd variants plus the delta instead.
+                const shimOld =
+                        "__forceinline char _interlockedadd8(char volatile * _Addend, char _Value)\n{\n   return _InterlockedExchangeAdd8(_Addend, _Value) + _Value;\n}\n\n__forceinline short _interlockedadd16(short volatile * _Addend, short _Value)\n{\n   return _InterlockedExchangeAdd16(_Addend, _Value) + _Value;\n}\n\n",
+                    addLines: [string, string][] = [
+                        [
+                            "_interlockedadd8 ((char *)   (_v), (char) (_i)) : \\",
+                            "_InterlockedExchangeAdd8 ((char *)   (_v), (char) (_i)) + (char) (_i) : \\",
+                        ],
+                        [
+                            "_interlockedadd16((short *)  (_v), (short) (_i)) : \\",
+                            "_InterlockedExchangeAdd16((short *)  (_v), (short) (_i)) + (short) (_i) : \\",
+                        ],
+                        [
+                            "_interlockedadd  ((long *)   (_v), (long) (_i)) : \\",
+                            "_InterlockedExchangeAdd  ((long *)   (_v), (long) (_i)) + (long) (_i) : \\",
+                        ],
+                        [
+                            "_interlockedadd64((__int64 *)(_v), (__int64) (_i)) : \\",
+                            "_InterlockedExchangeAdd64((__int64 *)(_v), (__int64) (_i)) + (__int64) (_i) : \\",
+                        ],
+                    ];
+
+                await $`sd -s -- ${shimOld} ${""} src/util/u_atomic.h`.cwd(path);
+                for (const [from, to] of addLines) {
+                    await $`sd -s -- ${from} ${to} src/util/u_atomic.h`.cwd(path);
+                }
+
+                // MSVC's CRT math.h only defines M_PI/M_LOG2E/etc. when
+                // _USE_MATH_DEFINES is set before it's included; NIR's builtin
+                // builder relies on them being available unconditionally.
+                const preArgsOld = `'-DPACKAGE_BUGREPORT="https://gitlab.freedesktop.org/mesa/mesa/-/issues"',`,
+                    preArgsNew = `${preArgsOld}\n  '-D_USE_MATH_DEFINES',`;
+
+                await $`sd -s -- ${preArgsOld} ${preArgsNew} meson.build`.cwd(path);
+            }
+
+            if (WIN) {
+                // include/meson.build only installs the Khronos GL/GLES/EGL headers
+                // (EGL/egl.h, eglext.h, eglplatform.h, ...) when the host isn't
+                // Windows - the non-upstream eglext_angle.h/eglmesaext.h pair a few
+                // lines down has no such guard, so a Windows build ends up with
+                // those two but not the base egl.h that consumers (e.g. libultrahdr's
+                // find_package(EGL)) actually look for. Drop the Windows exclusion so
+                // the full header set gets installed everywhere with_egl is on.
+                await $`sd -s -- ${"if not with_glvnd and host_machine.system() != 'windows'"} ${"if not with_glvnd"} include/meson.build`.cwd(
+                    path,
+                );
+            }
         },
         openexr: async () => {
             await $`sd -s -- "add_subdirectory(website/src)" "" CMakeLists.txt`.cwd(path);
@@ -750,7 +815,7 @@ export async function prehook(name: string, path: string) {
         },
         xz: async () => {
             if (toolchainState().toolchain === "msvc") {
-                await $`sd -s -- "if(NOT MSVC AND NOT CYGWIN)" "if (NOT (MSVC OR (CMAKE_COMPILER_SIMULATE_ID STREQUAL "MSVC")) AND NOT CYGWIN)" CMakeLists.txt`.cwd(
+                await $`sd -s -- "if(NOT MSVC AND NOT CYGWIN)" "if (NOT (MSVC OR (CMAKE_C_SIMULATE_ID STREQUAL "MSVC")) AND NOT CYGWIN)" CMakeLists.txt`.cwd(
                     path,
                 );
             }
@@ -833,7 +898,7 @@ async function buildPlain(
         isMsvc = toolchainState().toolchain === "msvc",
         prefix = buildRoot(isDebug);
 
-    await bash`cd ${msysPath} && rm -f *.o *.a *.dll *.lib *.exp *.so *.pdb *.def`;
+    await bash`cd ${msysPath} && rm -f *.o *.a *.dll *.lib *.exp *.so *.pdb`;
     await bash`cd ${msysPath} && ${toolchainState().tools.cc} -c ${flags} ${defineArgs} ${includeArgs} ${sources.join(" ")}`;
 
     await $`mkdir -p ${`${prefix}/lib`}`;
@@ -929,13 +994,15 @@ export async function buildMeson(name: string, path: string, isDebug: boolean) {
     const dir = buildDir(isDebug),
         native = isDebug ? DEBUG_NATIVE : RELEASE_NATIVE;
 
-    await $`meson setup ${dir} --native-file=${native} ${raw(arghook(name, isDebug))}`.cwd(path);
-    await $`meson compile -C ${dir}`.cwd(path);
-    await $`meson install -C ${dir}`.cwd(path);
+    await $`uv run --with mako,setuptools,pyyaml meson setup ${dir} --native-file=${native} ${raw(arghook(name, isDebug))}`.cwd(
+        path,
+    );
+    await $`uv run --with mako,setuptools,pyyaml meson compile -C ${dir}`.cwd(path);
+    await $`uv run --with mako,setuptools,pyyaml meson install -C ${dir}`.cwd(path);
 }
 
 export async function buildRust(name: string, path: string, isDebug: boolean) {
-    await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(isDebug ? "--debug" : "--release")} --no-default-features ${raw(arghook(name, isDebug))} --prefix=${isDebug ? DBG_ROOT : REL_ROOT}`.cwd(
+    await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(isDebug ? "--profile win-debug" : "--profile win-release")} --no-default-features ${raw(arghook(name, isDebug))} --prefix=${isDebug ? DBG_ROOT : REL_ROOT}`.cwd(
         path,
     );
 }

@@ -307,7 +307,6 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       "-Wl,-EMITTOOLVERSIONINFO:NO",
                       "-Wl,-NOCOFFGRPINFO",
                       "-Wl,-EMITPOGOPHASEINFO",
-                      "-Wl,-EMITVOLATILEMETADATA:NO",
                   ]
                 : [
                       "-Wl,-O3",
@@ -315,7 +314,6 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       "-Wl,--gc-sections",
                       "-Wl,--as-needed",
                       "-Wl,--strip-all",
-                      "-Wl,--compress-sections=*=zstd:22",
                       "-Wl,--build-id=none",
                       "-Wl,--icf=all",
                   ];
@@ -375,7 +373,7 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile): Shared {
         }
 
         if (toolchain === "msvc") {
-            cflags.push("-DWIN32", "-D_MT");
+            cflags.push("-DWIN32", "-D_MT", "-DNOMINMAX");
             ldflags.push("-Wl,-IGNORE:LONGSECTIONS");
         }
 

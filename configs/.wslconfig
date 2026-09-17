@@ -1,0 +1,10 @@
+[wsl2]
+memory=8GB
+processors=6
+swap=4GB
+networkingMode=mirrored
+dnsTunneling=true
+vmIdleTimeout=-1
+nestedVirtualization=true
+localhostForwarding=true
+autoProxy=true

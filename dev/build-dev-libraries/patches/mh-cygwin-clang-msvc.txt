@@ -81,8 +81,8 @@ OUTOPT = -o
 LIBSICU = $(ICUPREFIX)
 A = lib
 
-ARFLAGS := -nologo $(ARFLAGS:r=)#M#
-AR_OUTOPT = -OUT:#M#
+ARFLAGS := $(ARFLAGS:r=)#M#
+AR_OUTOPT = qc #M#
 
 ## An import library is needed for z/OS, MSVC and Cygwin
 IMPORT_LIB_EXT = .lib

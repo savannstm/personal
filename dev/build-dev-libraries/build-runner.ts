@@ -19,6 +19,7 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     libheif: { asan: false, debugOpt: true, fastmath: true, rtti: true },
     libjxl: { asan: false, debugOpt: true, fastmath: false, rtti: false },
     libraw: { asan: false, debugOpt: true, fastmath: false, rtti: false },
+    libultrahdr: { asan: false, debugOpt: true, fastmath: false, rtti: true },
     nuspell: { asan: false, debugOpt: true, fastmath: true, rtti: false },
     openexr: { asan: false, debugOpt: true, fastmath: false, rtti: true },
     projectm: { asan: false, debugOpt: false, fastmath: false, rtti: false },
@@ -218,7 +219,7 @@ async function invokeRepoBuild(library: Library, options: CliOptions, state: Bui
             await $`git clone --branch ${pin} ${library.url} ${path}`;
         }
     } else {
-        await $`git fetch --tags --quiet`.cwd(path);
+        await $`git fetch origin tag ${library.tag}`.cwd(path);
         await $`git checkout ${pin} --force`.cwd(path);
     }
 
