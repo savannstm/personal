@@ -7,7 +7,7 @@ import pc from "picocolors";
 
 import { buildRepos } from "./build-runner.ts";
 import { checkLibraryUpdates } from "./check-updates.ts";
-import { setPrefix, WIN } from "./config.ts";
+import { LLVM_ROOT, setPrefix, WIN } from "./config.ts";
 import { LIBRARIES } from "./libraries.ts";
 import { bash } from "./shell.ts";
 import { configureToolchain, isToolchain, TOOLCHAINS } from "./toolchain.ts";
@@ -20,8 +20,23 @@ export const WINDOWS_ONLY_TOOLCHAINS: ReadonlySet<Toolchain> = new Set(["clang-u
 const REQUIRED_UTILITIES = ["cmake", "git", "meson", "ninja", "sd"] as const;
 const UNIX_UTILITIES = ["autoconf", "automake", "bison", "file", "flex", "unzip", "make", "pkg-config"] as const;
 
-const BASE_PACKAGES = ["bison", "flex", "file", "autoconf", "automake", "make", "pkgconf"];
-const MINGW_PACKAGES = ["toolchain", "clang", "lld", "llvm", "lldb", "llvm-openmp", "clang-tools-extra", "libunwind"];
+// python: ICU's configure generates data/rules.mk with it; without it rules.mk is empty and the data build fails.
+const BASE_PACKAGES = ["bison", "flex", "file", "autoconf", "automake", "make", "pkgconf", "python"];
+// Kept identical to MSYS2_MINGW_PACKAGES in install-dev-tools/windows.ts.
+const MINGW_PACKAGES = [
+    "toolchain",
+    "clang",
+    "lld",
+    "llvm",
+    "lldb",
+    "llvm-openmp",
+    "clang-tools-extra",
+    "libunwind",
+    "cmake",
+    "ninja",
+    "meson",
+    "nasm",
+];
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
@@ -97,13 +112,13 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
                 [msvcVersion, sdkVersion, clangVersion] = await Promise.all([
                     latestVersionDir(msvcToolsDir),
                     latestVersionDir(`${sdkBase}/Include`),
-                    latestVersionDir("C:/Program Files/LLVM/lib/clang"),
+                    latestVersionDir(`${LLVM_ROOT}/lib/clang`),
                 ]),
                 msvcRoot = `${msvcToolsDir}/${msvcVersion}`,
                 msvcBin = `${msvcRoot}/bin/${HOST_ARCH}/${TARGET_ARCH}`,
                 sdkBin = `${sdkBase}/bin/${sdkVersion}/${TARGET_ARCH}`;
 
-            process.env.PATH = `C:/Program Files/LLVM/bin;C:/Program Files/LLVM/lib/clang/${clangVersion}/lib/windows;${msvcBin};${sdkBin};${process.env.PATH}`;
+            process.env.PATH = `${LLVM_ROOT}/bin;${LLVM_ROOT}/lib/clang/${clangVersion}/lib/windows;${msvcBin};${sdkBin};${process.env.PATH}`;
 
             process.env.INCLUDE = [
                 `${msvcRoot}/include`,
@@ -234,10 +249,6 @@ export function parseCliArgs(): CliOptions {
 
     if (prefix) {
         setPrefix(prefix);
-    }
-
-    if (!WIN) {
-        options.exclude.add("glew");
     }
 
     return options;

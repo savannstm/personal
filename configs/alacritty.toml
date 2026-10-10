@@ -1,0 +1,45 @@
+[general]
+import = ["C:/Users/savannstm/AppData/Roaming/alacritty/github_dark.toml"]
+working_directory = "C:/Users/savannstm"
+
+[window]
+opacity = 1
+padding = { x = 8, y = 8 }
+decorations = "full"
+startup_mode = "Windowed"
+
+[font]
+size = 14.0
+
+[font.normal]
+family = "Inconsolata Nerd Font Mono"
+style = "Regular"
+
+[font.bold]
+family = "Inconsolata Nerd Font Mono"
+style = "Bold"
+
+[cursor]
+style = { shape = "Beam", blinking = "Off" }
+
+[scrolling]
+history = 10000
+
+[terminal.shell]
+program = "pwsh"
+args = [
+    "-NoLogo",
+    "-NoExit",
+    "-Command",
+    "zellij",
+    "options",
+    "--theme",
+    "ayu-dark",
+    "--default-shell",
+    "pwsh",
+]
+
+[[keyboard.bindings]]
+key = "N"
+mods = "Control|Shift"
+action = "CreateNewWindow"

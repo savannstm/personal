@@ -119,9 +119,22 @@ async function buildMsvcCommand(): Promise<string> {
         join(sdkRoot, "Lib", sdkVer, "um", "x64"),
     ];
 
+    // LLVM comes from install-dev-tools: C:\PATH\llvm. Its real bin dir goes on PATH rather than the C:\PATH\bin
+    // symlinks, because clang finds its resource dir relative to the path it was launched from.
+    const llvmRoot = "C:\\PATH\\llvm",
+        clangVersion = latestByVersion(
+            readdirSync(join(llvmRoot, "lib", "clang"), { withFileTypes: true })
+                .filter((d) => d.isDirectory())
+                .map((d) => d.name),
+        );
+
+    if (!clangVersion) {
+        throw new Error(`No clang resource directory found under '${llvmRoot}'.`);
+    }
+
     const binDirs = [
-        "C:\\Program Files\\LLVM\\bin",
-        "C:\\Program Files\\LLVM\\lib\\clang\\22\\lib\\windows",
+        join(llvmRoot, "bin"),
+        join(llvmRoot, "lib", "clang", clangVersion, "lib", "windows"),
         join(msvcPath, "bin", "Hostx64", "x64"),
         join(sdkRoot, "bin", sdkVer, "x64"),
     ];

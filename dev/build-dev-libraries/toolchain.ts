@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 
 import {
     buildRoot,
@@ -10,6 +10,7 @@ import {
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
     SEP,
+    TOOLCHAINS_DIR,
     WIN,
 } from "./config.ts";
 import { bash } from "./shell.ts";
@@ -189,6 +190,9 @@ async function genToolchains(
         debug = buildDebug(options, shared, profile),
         release = buildRelease(options, shared, profile),
         tools = getTools(options.toolchain);
+
+    // The directory holds only generated files, so it may be missing on a fresh checkout.
+    await mkdir(TOOLCHAINS_DIR, { recursive: true });
 
     if (options.toolchain === "msvc") {
         await createTargets(options.toolchain, "bz2.lib", "lzma.lib", "deflatestatic.lib", "zstd_static.lib");
@@ -467,6 +471,9 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     lines.push(`set(CMAKE_SHARED_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_MODULE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_PREFIX_PATH ${cq(b.prefix)} CACHE STRING "" FORCE)`);
+    // pkg-config must only see this prefix's .pc files, else it resolves libs from another build type
+    const pcDirs = [`${cq(b.prefix).slice(1, -1)}/lib/pkgconfig`, `${cq(b.prefix).slice(1, -1)}/share/pkgconfig`];
+    lines.push(`set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(WIN ? ";" : ":")}")`);
 
     if (b.useCodeview) {
         lines.push('if (NOT CMAKE_BINARY_DIR MATCHES "/CMakeFiles/CMakeScratch/")');

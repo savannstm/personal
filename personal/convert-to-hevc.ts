@@ -63,9 +63,9 @@ async function convertFile(file: string, outputDir: string): Promise<Result> {
         return { name, reason: "no bitrate", status: "failed" };
     }
 
-    const bps = Number(bitrate);
+    const bps = Math.round(Number(bitrate) * 0.6);
     const maxrate = Math.round(bps * 1.2);
-    const bufsize = bps * 2;
+    const bufsize = Math.round(bps * 1.5);
     const kbps = Math.round(bps / 1000);
 
     // Probe codec + pixel format
@@ -75,7 +75,6 @@ async function convertFile(file: string, outputDir: string): Promise<Result> {
     const [codecName, pixFmt] = streamInfo.split(",");
 
     let hwaccelArgs: string[] = [];
-    let decoderArgs: string[] = [];
 
     switch (codecName) {
         case "h264":
@@ -83,12 +82,10 @@ async function convertFile(file: string, outputDir: string): Promise<Result> {
                 // h264 with 10-bit is not hardware-supported ANYWHERE
             } else {
                 hwaccelArgs = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"];
-                decoderArgs = ["-c:v", "h264_cuvid"];
             }
             break;
         case "hevc":
             hwaccelArgs = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"];
-            decoderArgs = ["-c:v", "hevc_cuvid"];
             break;
         default:
             return {
@@ -101,9 +98,7 @@ async function convertFile(file: string, outputDir: string): Promise<Result> {
     consola.log(`→ ${name}  [${kbps} kbps]  codec=${codecName}  pix=${pixFmt}`);
 
     const result =
-        await $`ffmpeg -hide_banner ${hwaccelArgs} ${decoderArgs} -i ${file} -map 0 -map_metadata 0 -map_chapters 0 -c:v hevc_nvenc -profile:v main10 -preset p6 -pix_fmt p010le -rc:v vbr -b:v ${bps} -maxrate:v ${maxrate} -bufsize:v ${bufsize} -bf 5 -c:a copy -c:s copy ${output}`
-            .quiet()
-            .noThrow();
+        await $`ffmpeg -hide_banner ${hwaccelArgs} -i ${file} -map 0 -map_metadata 0 -map_chapters 0 -c:v hevc_nvenc -pix_fmt p010le -profile:v main10 -tier:v high -level:v 4.1 -preset p6 -tune hq -multipass fullres -rc-lookahead 60 -refs 4 -bf 4 -b_ref_mode middle -spatial-aq 1 -temporal-aq 1 -aq-strength 8 -rc:v vbr -b:v ${bps} -maxrate:v ${maxrate} -bufsize:v ${bufsize} -c:a copy -c:s copy ${output}`.noThrow();
 
     const ok = result.code === 0;
     consola.log((ok ? pc.green : pc.red)(`  ${ok ? "✓" : "✗"} ${name}\n`));

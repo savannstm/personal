@@ -1,5 +1,5 @@
 import $ from "dax";
-import { cp, writeFile } from "node:fs/promises";
+import { appendFile, cp, readdir, rm, writeFile } from "node:fs/promises";
 
 import {
     buildDir,
@@ -16,6 +16,14 @@ import {
 } from "./config.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import { computeFlags, toolchainState } from "./toolchain.ts";
+
+/** Moves *.pdb from `from` to `to`; copy+delete because the build dir may sit on another device, where rename fails. */
+async function movePdbs(from: string, to: string) {
+    for (const file of (await readdir(from)).filter((f) => f.endsWith(".pdb"))) {
+        await cp(`${from}/${file}`, `${to}/${file}`);
+        await rm(`${from}/${file}`);
+    }
+}
 
 function cmakeVal(isDebug: boolean): string {
     return isDebug ? "ON" : "OFF";
@@ -127,7 +135,12 @@ async function stripDllImport(file: string): Promise<void> {
     await $`sd -s -- "__declspec(dllimport)" "" ${file}`;
 }
 
-export async function customBuild(name: string, p: string, isDebug: boolean) {
+export async function customBuild(
+    name: string,
+    p: string,
+    isDebug: boolean,
+    step: (sub: string, build: () => Promise<void>) => Promise<void>,
+) {
     const table: Record<string, () => Promise<void>> = {
         bzip2: async () => {
             await buildPlain(p, isDebug, {
@@ -150,31 +163,38 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
             const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, NM, RANLIB, STRIP, WINDRES } = process.env,
                 { toolchain } = toolchainState(),
                 audioCodecs =
-                    "--enable-decoder=aac,mp3,mp3float,opus,vorbis,flac,alac,ac3,eac3,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le --enable-demuxer=mov,matroska,ogg,wav,flac,mp3,aac,ac3,avi --enable-parser=aac,ac3,flac,mpegaudio,opus,vorbis --enable-filter=aformat,firequalizer,aresample,alimiter",
+                    "--enable-decoder=aac,ac3,alac,dca,eac3,flac,mp3float,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,truehd,vorbis --enable-demuxer=aac,ac3,aiff,avi,caf,dts,eac3,flac,matroska,mov,mp3,ogg,truehd,wav --enable-parser=aac,ac3,dca,flac,mlp,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
                 common = `--target-os=${WIN ? (toolchain === "msvc" ? "win64" : "mingw32") : "linux"} --arch=x86_64 ${toolchain === "msvc" ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --nm=${NM} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
+                // Only the formats nearly everything is in; the demuxers are the same as RAP's, they cost next to nothing.
+                trapCodecs =
+                    "--enable-decoder=aac,alac,flac,mp3float,opus,pcm_f32le,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,vorbis --enable-demuxer=aac,aiff,avi,flac,matroska,mov,mp3,ogg,wav --enable-parser=aac,flac,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
                 rpgCodecs =
-                    "--enable-demuxer=ogg,mov,wav --enable-decoder=vorbis,theora,aac,opus,h264,vp9,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le --enable-parser=aac,h264,vp9";
+                    "--enable-demuxer=asf,avi,flac,matroska,mov,mp3,mpegps,ogg,wav --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,flac,h264,mjpeg,mp2float,mp3float,mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,pcm_s8,pcm_mulaw,pcm_alaw,pcm_dvd,theora,vc1,vorbis,vp8,vp9,wmav1,wmav2,wmv1,wmv2,wmv3 --enable-parser=h264,mpeg4video,mpegvideo,vc1";
 
             let variants;
 
             if (isDebug) {
                 variants = [
                     { codecs: audioCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-rap` },
+                    { codecs: trapCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-trap` },
                     { codecs: rpgCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-rpgmtranslate` },
                 ];
             } else {
                 variants = [
                     { codecs: audioCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-rap` },
+                    { codecs: trapCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-trap` },
                     { codecs: rpgCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-rpgmtranslate` },
                 ];
             }
 
             for (const v of variants) {
-                await bash`cd ${p} && make clean`.noThrow();
-                const buildType = v.isDebug
-                    ? "--disable-optimizations --enable-debug --disable-stripping"
-                    : "--enable-optimizations --disable-debug --enable-stripping";
-                await buildAutoconf(p, v.isDebug, v.prefix, `${common} ${buildType} ${v.codecs}`);
+                await step(v.prefix.split("/").pop()!, async () => {
+                    await bash`cd ${toMsysPath(p)} && make clean`.noThrow();
+                    const buildType = v.isDebug
+                        ? "--disable-optimizations --enable-debug --disable-stripping"
+                        : "--enable-optimizations --disable-debug --enable-stripping";
+                    await buildAutoconf(p, v.isDebug, v.prefix, `${common} ${buildType} ${v.codecs}`);
+                });
             }
         },
         icu: async () => {
@@ -203,7 +223,7 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
                 isDebug,
                 prefix,
                 variantArgs,
-                `ICU_DATA_FILTER_FILE=filters.json CPPFLAGS="-DUCONFIG_NO_COLLATION=1 -DUCONFIG_NO_FORMATTING=1 -DUCONFIG_NO_TRANSLITERATION=1 -DUCONFIG_NO_REGULAR_EXPRESSIONS=1 -DUCONFIG_NO_SERVICE=1 -DUCONFIG_NO_IDNA=1 -DUCONFIG_NO_CONVERSION=0 -DUCONFIG_NO_LEGACY_CONVERSION=0 -DUCONFIG_NO_NORMALIZATION=0"`,
+                `ICU_DATA_FILTER_FILE=filters.json CPPFLAGS="-DUCONFIG_NO_COLLATION=ON -DUCONFIG_NO_FORMATTING=ON -DUCONFIG_NO_TRANSLITERATION=ON -DUCONFIG_NO_REGULAR_EXPRESSIONS=ON -DUCONFIG_NO_SERVICE=ON -DUCONFIG_NO_IDNA=ON -DUCONFIG_NO_CONVERSION=OFF -DUCONFIG_NO_LEGACY_CONVERSION=OFF -DUCONFIG_NO_NORMALIZATION=OFF"`,
                 `./runConfigureICU ${icuToolchain}`,
             );
         },
@@ -218,13 +238,14 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
 
             for (const quantum of [8, 16]) {
                 for (const hdr of ["enable", "disable"]) {
-                    await buildAutoconf(
+                    await step(`q${quantum}-${hdr}-hdri`, () =>
+                        buildAutoconf(
                         p,
                         isDebug,
                         libRoot,
                         `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${quantum} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
                             "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
-                    );
+                    ));
                 }
             }
         },
@@ -282,8 +303,8 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
         },
         qt5: async () => {
             const submodules = ["qtbase", "qtimageformats", "qttools", "qtsvg"],
-                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${toolchainState().toolchain === "msvc" ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-no-opengl"}`,
-                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-run-opengl-tests -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -no-feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
+                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${toolchainState().toolchain === "msvc" ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-opengl desktop -no-egl"}`,
+                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -no-feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -no-feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
 
             await $`git submodule update --init --depth 1 ${submodules}`.cwd(p);
             await $`git submodule update --init --recursive --depth 1`.cwd(`${p}/qttools`);
@@ -294,9 +315,8 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
                         p,
                     );
 
-                    // Qt 6.11.2 manifest that generates asm.v2 is incompatible
-                    // with LLD's manifest merging logic
-                    await $`sd -s "asm.v2" "asm.v3" qtbase/src/corelib/Qt6CoreMacros.cmake`.cwd(p);
+                    // await $`sd -s "asm.v2" "asm.v3" qtbase/src/corelib/Qt6CoreMacros.cmake`.cwd(p);
+                    //! Qt 6.12 finally uses asm.v3
                 }
 
                 await $`./configure${raw(WIN ? ".bat" : "")} ${raw(common)} -debug -sanitize address -no-static -no-static-runtime ${raw(featureToggles)} -- -B=debug -DCMAKE_TOOLCHAIN_FILE=${DEBUG_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
@@ -321,284 +341,241 @@ export async function customBuild(name: string, p: string, isDebug: boolean) {
 
 export function arghook(name: string, isDebug: boolean) {
     const table: Record<string, string> = {
-        brotli: `-DBROTLI_EMSCRIPTEN=0 -DBROTLI_BUILD_TOOLS=0`,
+        brotli: `-DBROTLI_EMSCRIPTEN=OFF -DBROTLI_BUILD_TOOLS=OFF`,
         dav1d: "-Denable_asm=true -Denable_tools=false -Denable_examples=false -Denable_tests=false -Denable_seek_stress=false -Denable_docs=false -Dlogging=false -Dtestdata_tests=false -Dfuzzing_engine=none -Dtrim_dsp=true",
-        fltk: `-DFLTK_BUILD_SHARED_LIBS=0 -DFLTK_USE_SYSTEM_ZLIB=1 -DFLTK_USE_SYSTEM_LIBPNG=1 -DFLTK_USE_SYSTEM_LIBJPEG=1 -DFLTK_OPTION_SVG=0 -DFLTK_BUILD_FLUID=0 -DFLTK_BUILD_FLTK_OPTIONS=0 -DFLTK_BUILD_GL=1 -DFLTK_BUILD_FORMS=0 -DFLTK_BUILD_TEST=0 -DFLTK_BUILD_HTML_DOCS=0 -DFLTK_OPTION_PEN_SUPPORT=0 -DFLTK_OPTION_LARGE_FILE=0 -DFLTK_OPTION_PRINT_SUPPORT=0 -DFLTK_OPTION_FILESYSTEM_SUPPORT=0 -DFLTK_OPTION_STD=0 -DFLTK_GRAPHICS_GDIPLUS=0 -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
-        freetype: `-DFT_DISABLE_ZLIB=0 -DFT_REQUIRE_ZLIB=1 -DFT_DISABLE_BZIP2=0 -DFT_REQUIRE_BZIP2=1 -DFT_DISABLE_PNG=0 -DFT_REQUIRE_PNG=1 -DFT_DISABLE_HARFBUZZ=1 -DFT_DYNAMIC_HARFBUZZ=0 -DFT_REQUIRE_HARFBUZZ=0 -DFT_DISABLE_BROTLI=1 -DFT_REQUIRE_BROTLI=0 -DDISABLE_FORCE_DEBUG_POSTFIX=1`,
-        glaze: "-Dglaze_ENABLE_FUZZING=0 -Dglaze_DEVELOPER_MODE=0",
-        glew: "-DBUILD_UTILS=0 -DGLEW_X11=0",
-        glfw: `-DGLFW_BUILD_EXAMPLES=0 -DGLFW_BUILD_TESTS=0 -DGLFW_BUILD_DOCS=0 -DGLFW_INSTALL=1 -DGLFW_LIBRARY_TYPE=${isDebug ? "SHARED" : "STATIC"}`,
-        googletest: "-DBUILD_GMOCK=0",
-        harfbuzz: `-DHB_BUILD_UTILS=0 -DHB_BUILD_RASTER=0 -DHB_BUILD_VECTOR=0 -DHB_BUILD_GPU=0 -DHB_BUILD_TESTS=0 -DHB_HAVE_CAIRO=OFF -DHB_HAVE_FREETYPE=ON -DHB_HAVE_GRAPHITE2=OFF -DHB_HAVE_GLIB=OFF -DHB_HAVE_ICU=OFF -DHB_HAVE_UNISCRIBE=OFF -DHB_HAVE_GDI=OFF -DHB_HAVE_DIRECTWRITE=ON -DHB_HAVE_GOBJECT=OFF -DHB_HAVE_INTROSPECTION=OFF`,
-        highway: `-DHWY_ENABLE_CONTRIB=0 -DHWY_ENABLE_EXAMPLES=0 -DHWY_ENABLE_TESTS=0 -DHWY_FORCE_STATIC_LIBS=${cmakeVal(!isDebug)}`,
-        imath: `-DPYTHON=0 -DPYBIND11=0 -DBUILD_WEBSITE=0 -DIMATH_HALF_USE_LOOKUP_TABLE=1 -DIMATH_USE_DEFAULT_VISIBILITY=0 -DIMATH_ENABLE_LARGE_STACK=0 -DIMATH_USE_NOEXCEPT=0 -DIMATH_INSTALL_PKG_CONFIG=1`,
+        fltk: `-DFLTK_BUILD_SHARED_LIBS=OFF -DFLTK_USE_SYSTEM_ZLIB=ON -DFLTK_USE_SYSTEM_LIBPNG=ON -DFLTK_USE_SYSTEM_LIBJPEG=ON -DFLTK_OPTION_SVG=OFF -DFLTK_BUILD_FLUID=OFF -DFLTK_BUILD_FLTK_OPTIONS=OFF -DFLTK_BUILD_GL=ON -DFLTK_BUILD_FORMS=OFF -DFLTK_BUILD_TEST=OFF -DFLTK_BUILD_HTML_DOCS=OFF -DFLTK_OPTION_PEN_SUPPORT=OFF -DFLTK_OPTION_LARGE_FILE=OFF -DFLTK_OPTION_PRINT_SUPPORT=OFF -DFLTK_OPTION_FILESYSTEM_SUPPORT=OFF -DFLTK_OPTION_STD=OFF -DFLTK_GRAPHICS_GDIPLUS=OFF -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
+        freetype: `-DFT_DISABLE_ZLIB=OFF -DFT_REQUIRE_ZLIB=ON -DFT_DISABLE_BZIP2=OFF -DFT_REQUIRE_BZIP2=ON -DFT_DISABLE_PNG=OFF -DFT_REQUIRE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DYNAMIC_HARFBUZZ=OFF -DFT_REQUIRE_HARFBUZZ=OFF -DFT_DISABLE_BROTLI=ON -DFT_REQUIRE_BROTLI=OFF -DDISABLE_FORCE_DEBUG_POSTFIX=ON`,
+        glaze: "-Dglaze_ENABLE_FUZZING=OFF -Dglaze_DEVELOPER_MODE=OFF",
+        glfw: `-DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DGLFW_INSTALL=ON -DGLFW_LIBRARY_TYPE=${isDebug ? "SHARED" : "STATIC"}`,
+        googletest: "-DBUILD_GMOCK=OFF",
+        harfbuzz: `-DHB_BUILD_UTILS=OFF -DHB_BUILD_RASTER=OFF -DHB_BUILD_VECTOR=OFF -DHB_BUILD_GPU=OFF -DHB_BUILD_TESTS=OFF -DHB_HAVE_CAIRO=OFF -DHB_HAVE_FREETYPE=ON -DHB_HAVE_GRAPHITE2=OFF -DHB_HAVE_GLIB=OFF -DHB_HAVE_ICU=OFF -DHB_HAVE_UNISCRIBE=OFF -DHB_HAVE_GDI=OFF -DHB_HAVE_DIRECTWRITE=ON -DHB_HAVE_GOBJECT=OFF -DHB_HAVE_INTROSPECTION=OFF`,
+        highway: `-DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_TESTS=OFF -DHWY_FORCE_STATIC_LIBS=${cmakeVal(!isDebug)}`,
+        imath: `-DPYTHON=OFF -DPYBIND11=OFF -DBUILD_WEBSITE=OFF -DIMATH_HALF_USE_LOOKUP_TABLE=ON -DIMATH_USE_DEFAULT_VISIBILITY=OFF -DIMATH_ENABLE_LARGE_STACK=OFF -DIMATH_USE_NOEXCEPT=OFF -DIMATH_INSTALL_PKG_CONFIG=ON`,
         kvazaar: "-DBUILD_TESTS=OFF -DUSE_CRYPTO=OFF -DBUILD_KVAZAAR_BINARY=OFF",
-        lcms2: `-DLCMS2_BUILD_TOOLS=0 -DLCMS2_BUILD_TESTS=0 -DLCMS2_BUILD_JPGICC=0 -DLCMS2_BUILD_TIFICC=0 -DLCMS2_BUILD_TIFDIFF=0 -DLCMS2_BUILD_SHARED=${cmakeVal(isDebug)} -DLCMS2_BUILD_STATIC=${cmakeVal(!isDebug)}`,
-        libarchive: `-DENABLE_MBEDTLS=0 -DENABLE_NETTLE=0 -DENABLE_OPENSSL=0 -DENABLE_LIBB2=0 -DENABLE_LZ4=0 -DENABLE_LZO=0 -DENABLE_LZMA=1 -DENABLE_ZSTD=0 -DENABLE_ZLIB=0 -DENABLE_BZip2=0 -DENABLE_LIBXML2=0 -DENABLE_EXPAT=0 -DENABLE_WIN32_XMLLITE=0 -DENABLE_PCREPOSIX=0 -DENABLE_PCRE2POSIX=0 -DENABLE_LIBGCC=0 -DENABLE_CNG=1 -DENABLE_TAR=0 -DENABLE_CPIO=0 -DENABLE_CAT=0 -DENABLE_UNZIP=0 -DENABLE_XATTR=0 -DENABLE_ACL=0 -DENABLE_ICONV=0 -DENABLE_TEST=0 -DENABLE_COVERAGE=0 -DENABLE_WERROR=0 -DPOSIX_REGEX_LIB=NONE`,
-        libde265: `-DUSE_IWYU=0 -DENABLE_SDL=0 -DENABLE_SIMD=1 -DENABLE_AVX2=1 -DENABLE_AVX512=0 -DENABLE_DECODER=0 -DENABLE_ENCODER=0 -DENABLE_SHERLOCK265=0 -DENABLE_INTERNAL_DEVELOPMENT_TOOLS=0 -DWITH_FUZZERS=0 -DFORCE_FULL_VISIBILITY=0`,
-        libdeflate: `-DLIBDEFLATE_COMPRESSION_SUPPORT=1 -DLIBDEFLATE_DECOMPRESSION_SUPPORT=1 -DLIBDEFLATE_ZLIB_SUPPORT=1 -DLIBDEFLATE_GZIP_SUPPORT=0 -DLIBDEFLATE_BUILD_GZIP=0 -DLIBDEFLATE_BUILD_TESTS=0 -DLIBDEFLATE_BUILD_STATIC_LIB=${cmakeVal(!isDebug)} -DLIBDEFLATE_BUILD_SHARED_LIB=${cmakeVal(isDebug)}`,
+        lcms2: `-DLCMS2_BUILD_TOOLS=OFF -DLCMS2_BUILD_TESTS=OFF -DLCMS2_BUILD_JPGICC=OFF -DLCMS2_BUILD_TIFICC=OFF -DLCMS2_BUILD_TIFDIFF=OFF -DLCMS2_BUILD_SHARED=${cmakeVal(isDebug)} -DLCMS2_BUILD_STATIC=${cmakeVal(!isDebug)}`,
+        libarchive: `-DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_OPENSSL=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=ON -DENABLE_ZSTD=OFF -DENABLE_ZLIB=OFF -DENABLE_BZip2=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_WIN32_XMLLITE=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF -DENABLE_CNG=ON -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_XATTR=OFF -DENABLE_ACL=OFF -DENABLE_ICONV=OFF -DENABLE_TEST=OFF -DENABLE_COVERAGE=OFF -DENABLE_WERROR=OFF -DPOSIX_REGEX_LIB=NONE`,
+        libde265: `-DUSE_IWYU=OFF -DENABLE_SDL=OFF -DENABLE_SIMD=ON -DENABLE_AVX2=ON -DENABLE_AVX512=OFF -DENABLE_DECODER=OFF -DENABLE_ENCODER=OFF -DENABLE_SHERLOCK265=OFF -DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF -DWITH_FUZZERS=OFF -DFORCE_FULL_VISIBILITY=OFF`,
+        libdeflate: `-DLIBDEFLATE_COMPRESSION_SUPPORT=ON -DLIBDEFLATE_DECOMPRESSION_SUPPORT=ON -DLIBDEFLATE_ZLIB_SUPPORT=ON -DLIBDEFLATE_GZIP_SUPPORT=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF -DLIBDEFLATE_BUILD_STATIC_LIB=${cmakeVal(!isDebug)} -DLIBDEFLATE_BUILD_SHARED_LIB=${cmakeVal(isDebug)}`,
         libgit2: `-DBUILD_CLI=OFF -DBUILD_FUZZERS=OFF -DUSE_THREADS=ON -DUSE_NSEC=ON -DUSE_SSH=OFF -DUSE_HTTPS=ON -DREGEX_BACKEND=pcre2 -DDEPRECATE_HARD=ON`,
-        libheif: `-DWITH_EXAMPLES=0 -DWITH_EXAMPLE_HEIF_THUMB=0 -DWITH_EXAMPLE_HEIF_VIEW=0 -DWITH_GDK_PIXBUF=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_LIBDE265=1 -DWITH_X265=0 -DWITH_KVAZAAR=1 -DWITH_UVG266=0 -DWITH_VVDEC=0 -DWITH_VVENC=0 -DWITH_X264=0 -DWITH_OpenH264_DECODER=1 -DWITH_DAV1D=1 -DWITH_AOM_DECODER=0 -DWITH_AOM_ENCODER=0 -DWITH_SvtEnc=0 -DWITH_RAV1E=1 -DWITH_JPEG_DECODER=1 -DWITH_JPEG_ENCODER=0 -DWITH_OpenJPEG_ENCODER=0 -DWITH_OpenJPEG_DECODER=1 -DWITH_FFMPEG_DECODER=0 -DWITH_OPENJPH_ENCODER=0 -DWITH_UNCOMPRESSED_CODEC=0 -DWITH_WEBCODECS=0 -DWITH_LIBSHARPYUV=1 -DBUILD_DOCUMENTATION=0`,
-        "libjpeg-turbo": `-DWITH_ARITH_DEC=1 -DWITH_ARITH_ENC=1 -DWITH_JAVA=0 -DWITH_JPEG7=0 -DWITH_JPEG8=0 -DWITH_SIMD=1 -DWITH_TURBOJPEG=1 -DWITH_TOOLS=0 -DWITH_TESTS=0 -DWITH_FUZZ=0 -DFORCE_INLINE=1 -DENABLE_SHARED=${cmakeVal(isDebug)} -DENABLE_STATIC=${cmakeVal(!isDebug)} -DWITH_SYSTEM_SPNG=1 -DWITH_SYSTEM_ZLIB=1`,
-        libjxl: `-DJPEGXL_ENABLE_FUZZERS=0 -DJPEGXL_ENABLE_DEVTOOLS=0 -DJPEGXL_ENABLE_TESTS=0 -DJPEGXL_ENABLE_DOXYGEN=0 -DJPEGXL_ENABLE_MANPAGES=0 -DJPEGXL_ENABLE_BENCHMARK=0 -DJPEGXL_ENABLE_EXAMPLES=0 -DJPEGXL_BUNDLE_LIBPNG=0 -DJPEGXL_ENABLE_JNI=0 -DJPEGXL_ENABLE_SJPEG=0 -DJPEGXL_ENABLE_OPENEXR=1 -DJPEGXL_ENABLE_SKCMS=0 -DJPEGXL_ENABLE_VIEWERS=0 -DJPEGXL_ENABLE_TCMALLOC=0 -DJPEGXL_ENABLE_PLUGINS=0 -DJPEGXL_ENABLE_COVERAGE=0 -DJPEGXL_ENABLE_TRANSCODE_JPEG=1 -DJPEGXL_ENABLE_BOXES=1 -DJPEGXL_WARNINGS_AS_ERRORS=0 -DJPEGXL_TEST_TOOLS=0 -DJPEGXL_ENABLE_WASM_THREADS=0 -DJPEGXL_FORCE_SYSTEM_BROTLI=1 -DJPEGXL_FORCE_SYSTEM_GTEST=1 -DJPEGXL_FORCE_SYSTEM_LCMS2=1 -DJPEGXL_FORCE_SYSTEM_HWY=1 -DJPEGXL_STATIC=${cmakeVal(!isDebug)}`,
-        libpng: `-DPNG_TESTS=0 -DPNG_TOOLS=0 -DPNG_EXECUTABLES=0 -DPNG_HARDWARE_OPTIMIZATIONS=1 -DPNG_BUILD_ZLIB=0 -DPNG_SHARED=${cmakeVal(isDebug)} -DPNG_STATIC=${cmakeVal(!isDebug)} -DPNG_DEBUG_POSTFIX=""`,
+        libheif: `-DWITH_EXAMPLES=OFF -DWITH_EXAMPLE_HEIF_THUMB=OFF -DWITH_EXAMPLE_HEIF_VIEW=OFF -DWITH_GDK_PIXBUF=OFF -DENABLE_PLUGIN_LOADING=OFF -DWITH_LIBDE265=ON -DWITH_X265=OFF -DWITH_KVAZAAR=ON -DWITH_UVG266=OFF -DWITH_VVDEC=OFF -DWITH_VVENC=OFF -DWITH_X264=OFF -DWITH_OpenH264_DECODER=ON -DWITH_DAV1D=ON -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF -DWITH_SvtEnc=OFF -DWITH_RAV1E=ON -DWITH_JPEG_DECODER=ON -DWITH_JPEG_ENCODER=OFF -DWITH_OpenJPEG_ENCODER=OFF -DWITH_OpenJPEG_DECODER=ON -DWITH_FFMPEG_DECODER=OFF -DWITH_OPENJPH_ENCODER=OFF -DWITH_UNCOMPRESSED_CODEC=OFF -DWITH_WEBCODECS=OFF -DWITH_LIBSHARPYUV=ON -DBUILD_DOCUMENTATION=OFF`,
+        "libjpeg-turbo": `-DWITH_ARITH_DEC=ON -DWITH_ARITH_ENC=ON -DWITH_JAVA=OFF -DWITH_JPEG7=OFF -DWITH_JPEG8=OFF -DWITH_SIMD=ON -DWITH_TURBOJPEG=ON -DWITH_TOOLS=OFF -DWITH_TESTS=OFF -DWITH_FUZZ=OFF -DFORCE_INLINE=ON -DENABLE_SHARED=${cmakeVal(isDebug)} -DENABLE_STATIC=${cmakeVal(!isDebug)} -DWITH_SYSTEM_SPNG=ON -DWITH_SYSTEM_ZLIB=ON`,
+        libjxl: `-DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_ENABLE_TESTS=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=ON -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF -DJPEGXL_ENABLE_TCMALLOC=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_COVERAGE=OFF -DJPEGXL_ENABLE_TRANSCODE_JPEG=ON -DJPEGXL_ENABLE_BOXES=ON -DJPEGXL_WARNINGS_AS_ERRORS=OFF -DJPEGXL_TEST_TOOLS=OFF -DJPEGXL_ENABLE_WASM_THREADS=OFF -DJPEGXL_FORCE_SYSTEM_BROTLI=ON -DJPEGXL_FORCE_SYSTEM_GTEST=ON -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DJPEGXL_FORCE_SYSTEM_HWY=ON -DJPEGXL_STATIC=${cmakeVal(!isDebug)}`,
+        libpng: `-DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DPNG_EXECUTABLES=OFF -DPNG_HARDWARE_OPTIMIZATIONS=ON -DPNG_BUILD_ZLIB=OFF -DPNG_SHARED=${cmakeVal(isDebug)} -DPNG_STATIC=${cmakeVal(!isDebug)} -DPNG_DEBUG_POSTFIX=""`,
         libspng: `-DENABLE_OPT=ON -DSPNG_SHARED=${cmakeVal(isDebug)} -DSPNG_STATIC=${cmakeVal(!isDebug)}`,
-        libtiff: `-Dtiff-tools=0 -Dtiff-tests=0 -Dtiff-contrib=0 -Dtiff-docs=0 -Dtiff-deprecated=0 -Dtiff-static=${cmakeVal(!isDebug)} -Dlerc=0 -Djbig=0 -DTIFF_STATIC_LIBS_DEFAULT=${cmakeVal(!isDebug)}`,
-        libultrahdr: `-DUHDR_BUILD_EXAMPLES=0 -DUHDR_ENABLE_INTRINSICS=1 -DUHDR_ENABLE_GLES=1 -DUHDR_ENABLE_HEIF=0`,
-        libwebp: `-DWEBP_ENABLE_SIMD=1 -DWEBP_BUILD_ANIM_UTILS=0 -DWEBP_BUILD_CWEBP=0 -DWEBP_BUILD_DWEBP=0 -DWEBP_BUILD_GIF2WEBP=0 -DWEBP_BUILD_IMG2WEBP=0 -DWEBP_BUILD_VWEBP=0 -DWEBP_BUILD_WEBPINFO=0 -DWEBP_BUILD_LIBWEBPMUX=1 -DWEBP_BUILD_WEBPMUX=0 -DWEBP_BUILD_EXTRAS=0 -DWEBP_BUILD_FUZZTEST=0 -DWEBP_USE_THREAD=1 -DWEBP_NEAR_LOSSLESS=1 -DWEBP_ENABLE_SWAP_16BIT_CSP=0 -DWEBP_ENABLE_WUNUSED_RESULT=0 -DWEBP_BUILD_WEBP_JS=0 -DWEBP_UNICODE=0 -DWEBP_LINK_STATIC=${cmakeVal(!isDebug)}`,
-        libxml2: `-DLIBXML2_WITH_CATALOG=0 -DLIBXML2_WITH_DEBUG=0 -DLIBXML2_WITH_DOCS=0 -DLIBXML2_WITH_HTML=0 -DLIBXML2_WITH_HTTP=0 -DLIBXML2_WITH_ICONV=0 -DLIBXML2_WITH_ICU=0 -DLIBXML2_WITH_ISO8859X=1 -DLIBXML2_WITH_LEGACY=0 -DLIBXML2_WITH_MODULES=0 -DLIBXML2_WITH_OUTPUT=1 -DLIBXML2_WITH_PATTERN=0 -DLIBXML2_WITH_PROGRAMS=0 -DLIBXML2_WITH_PUSH=1 -DLIBXML2_WITH_PYTHON=0 -DLIBXML2_WITH_READLINE=0 -DLIBXML2_WITH_REGEXPS=0 -DLIBXML2_WITH_SAX1=1 -DLIBXML2_WITH_TESTS=0 -DLIBXML2_WITH_TLS=0 -DLIBXML2_WITH_VALID=0 -DLIBXML2_WITH_XINCLUDE=0 -DLIBXML2_WITH_XPATH=0 -DLIBXML2_WITH_ZLIB=1 -DLIBXML2_WITH_C14N=0 -DLIBXML2_WITH_HISTORY=0 -DLIBXML2_WITH_READER=1 -DLIBXML2_WITH_SCHEMAS=0 -DLIBXML2_WITH_SCHEMATRON=0 -DLIBXML2_WITH_THREAD_ALLOC=1 -DLIBXML2_WITH_WRITER=1 -DLIBXML2_WITH_XPTR=0 -DLIBXML2_WITH_RELAXNG=0 -DLIBXML2_WITH_THREADS=1`,
-        libzip: `-DENABLE_COMMONCRYPTO=0 -DENABLE_GNUTLS=0 -DENABLE_MBEDTLS=0 -DENABLE_OPENSSL=0 -DENABLE_WINDOWS_CRYPTO=0 -DENABLE_BZIP2=1 -DENABLE_LZMA=1 -DENABLE_ZSTD=1 -DENABLE_FDOPEN=1 -DBUILD_REGRESS=0 -DBUILD_OSSFUZZ=0`,
-        md4c: "-DBUILD_MD2HTML_EXECUTABLE=0",
-        mesa: `-Dplatforms=windows -Degl=enabled -Degl-native-platform=surfaceless -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglx=disabled -Dgallium-drivers=d3d12 -Dgallium-d3d12-graphics=enabled -Dgallium-d3d12-video=disabled -Dvulkan-drivers= -Dllvm=disabled -Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzlib=disabled -Dzstd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Ddisplay-info=disabled -Dmicrosoft-clc=disabled -Dspirv-to-dxil=false -Dbuild-tests=false -Dhtml-docs=disabled -Dmin-windows-version=10`,
-        mimalloc: `-DMI_OPT_ARCH=1 -DMI_OPT_SIMD=1 -DMI_SECURE=${cmakeVal(isDebug)} -DMI_SECURE_FULL=${cmakeVal(isDebug)} -DMI_OVERRIDE=1 -DMI_XMALLOC=0 -DMI_SHOW_ERRORS=${cmakeVal(isDebug)} -DMI_GUARDED=${cmakeVal(isDebug)} -DMI_FREE_IS_CHECKED=${isDebug ? "ON" : "OFF"} -DMI_DEBUG=${cmakeVal(isDebug)} -DMI_DEBUG_INTERNAL=${cmakeVal(isDebug)} -DMI_BUILD_SHARED=${cmakeVal(isDebug)} -DMI_BUILD_STATIC=${cmakeVal(!isDebug)} -DMI_BUILD_OBJECT=0 -DMI_BUILD_TESTS=0`,
-        "opencl-headers": `-DOPENCL_HEADERS_BUILD_TESTING=0 -DOPENCL_HEADERS_BUILD_CXX_TESTS=0`,
-        "opencl-icd": `-DOPENCL_ICD_LOADER_BUILD_TESTING=0 -DENABLE_OPENCL_LAYERINFO=0`,
-        openexr: `-DOPENEXR_INSTALL_DOCS=0 -DBUILD_WEBSITE=0 -DOPENEXR_ENABLE_THREADING=1 -DOPENEXR_USE_TBB=0 -DOPENEXR_USE_DEFAULT_VISIBILITY=0 -DOPENEXR_ENABLE_LARGE_STACK=0 -DOPENEXR_BUILD_TOOLS=0 -DOPENEXR_INSTALL_TOOLS=0 -DOPENEXR_INSTALL_DEVELOPER_TOOLS=0 -DOPENEXR_BUILD_EXAMPLES=0 -DOPENEXR_BUILD_PYTHON=0 -DOPENEXR_BUILD_OSS_FUZZ=0 -DOPENEXR_TEST_LIBRARIES=0 -DOPENEXR_TEST_TOOLS=0 -DOPENEXR_TEST_PYTHON=0 -DOPENEXR_USE_CLANG_TIDY=0 -DOPENEXR_FORCE_INTERNAL_DEFLATE=0 -DOPENEXR_FORCE_INTERNAL_OPENJPH=0 -DOPENEXR_FORCE_INTERNAL_IMATH=0 -DOPENEXR_INSTALL_PKG_CONFIG=1`,
+        libtiff: `-Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Dtiff-deprecated=OFF -Dtiff-static=${cmakeVal(!isDebug)} -Dlerc=OFF -Djbig=OFF -DTIFF_STATIC_LIBS_DEFAULT=${cmakeVal(!isDebug)}`,
+        libultrahdr: `-DUHDR_BUILD_EXAMPLES=OFF -DUHDR_ENABLE_INTRINSICS=ON -DUHDR_ENABLE_GLES=ON -DUHDR_ENABLE_HEIF=OFF`,
+        libwebp: `-DWEBP_ENABLE_SIMD=ON -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_LIBWEBPMUX=ON -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_BUILD_FUZZTEST=OFF -DWEBP_USE_THREAD=ON -DWEBP_NEAR_LOSSLESS=ON -DWEBP_ENABLE_SWAP_16BIT_CSP=OFF -DWEBP_ENABLE_WUNUSED_RESULT=OFF -DWEBP_BUILD_WEBP_JS=OFF -DWEBP_UNICODE=OFF -DWEBP_LINK_STATIC=${cmakeVal(!isDebug)}`,
+        libxml2: `-DLIBXML2_WITH_CATALOG=OFF -DLIBXML2_WITH_DEBUG=OFF -DLIBXML2_WITH_DOCS=OFF -DLIBXML2_WITH_HTML=OFF -DLIBXML2_WITH_HTTP=OFF -DLIBXML2_WITH_ICONV=OFF -DLIBXML2_WITH_ICU=OFF -DLIBXML2_WITH_ISO8859X=ON -DLIBXML2_WITH_LEGACY=OFF -DLIBXML2_WITH_MODULES=OFF -DLIBXML2_WITH_OUTPUT=ON -DLIBXML2_WITH_PATTERN=OFF -DLIBXML2_WITH_PROGRAMS=OFF -DLIBXML2_WITH_PUSH=ON -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_READLINE=OFF -DLIBXML2_WITH_REGEXPS=OFF -DLIBXML2_WITH_SAX1=ON -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_TLS=OFF -DLIBXML2_WITH_VALID=OFF -DLIBXML2_WITH_XINCLUDE=OFF -DLIBXML2_WITH_XPATH=OFF -DLIBXML2_WITH_ZLIB=ON -DLIBXML2_WITH_C14N=OFF -DLIBXML2_WITH_HISTORY=OFF -DLIBXML2_WITH_READER=ON -DLIBXML2_WITH_SCHEMAS=OFF -DLIBXML2_WITH_SCHEMATRON=OFF -DLIBXML2_WITH_THREAD_ALLOC=ON -DLIBXML2_WITH_WRITER=ON -DLIBXML2_WITH_XPTR=OFF -DLIBXML2_WITH_RELAXNG=OFF -DLIBXML2_WITH_THREADS=ON`,
+        libzip: `-DENABLE_COMMONCRYPTO=OFF -DENABLE_GNUTLS=OFF -DENABLE_MBEDTLS=OFF -DENABLE_OPENSSL=OFF -DENABLE_WINDOWS_CRYPTO=OFF -DENABLE_BZIP2=ON -DENABLE_LZMA=ON -DENABLE_ZSTD=ON -DENABLE_FDOPEN=ON -DBUILD_REGRESS=OFF -DBUILD_OSSFUZZ=OFF`,
+        md4c: "-DBUILD_MD2HTML_EXECUTABLE=OFF",
+        mesa: `-Dplatforms=windows -Degl=enabled -Degl-native-platform=surfaceless -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglx=disabled -Dgallium-drivers=d3d12 -Dgallium-d3d12-graphics=enabled -Dgallium-d3d12-video=disabled -Dvulkan-drivers= -Dllvm=disabled -Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzlib=disabled -Dzstd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Ddisplay-info=disabled -Dmicrosoft-clc=disabled -Dspirv-to-dxil=false -Dbuild-tests=false -Dhtml-docs=disabled -Dmin-windows-version=10 -Dvideo-codecs=`,
+        mimalloc: `-DMI_OPT_ARCH=ON -DMI_OPT_SIMD=ON -DMI_SECURE=${cmakeVal(isDebug)} -DMI_SECURE_FULL=${cmakeVal(isDebug)} -DMI_OVERRIDE=ON -DMI_XMALLOC=OFF -DMI_SHOW_ERRORS=${cmakeVal(isDebug)} -DMI_GUARDED=${cmakeVal(isDebug)} -DMI_FREE_IS_CHECKED=${cmakeVal(isDebug)} -DMI_DEBUG=${cmakeVal(isDebug)} -DMI_DEBUG_INTERNAL=${cmakeVal(isDebug)} -DMI_BUILD_SHARED=${cmakeVal(isDebug)} -DMI_BUILD_STATIC=${cmakeVal(!isDebug)} -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF`,
+        "opencl-headers": `-DOPENCL_HEADERS_BUILD_TESTING=OFF -DOPENCL_HEADERS_BUILD_CXX_TESTS=OFF`,
+        "opencl-icd": `-DOPENCL_ICD_LOADER_BUILD_TESTING=OFF -DENABLE_OPENCL_LAYERINFO=OFF`,
+        openexr: `-DOPENEXR_INSTALL_DOCS=OFF -DBUILD_WEBSITE=OFF -DOPENEXR_ENABLE_THREADING=ON -DOPENEXR_USE_TBB=OFF -DOPENEXR_USE_DEFAULT_VISIBILITY=OFF -DOPENEXR_ENABLE_LARGE_STACK=OFF -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_INSTALL_DEVELOPER_TOOLS=OFF -DOPENEXR_BUILD_EXAMPLES=OFF -DOPENEXR_BUILD_PYTHON=OFF -DOPENEXR_BUILD_OSS_FUZZ=OFF -DOPENEXR_TEST_LIBRARIES=OFF -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF -DOPENEXR_USE_CLANG_TIDY=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_OPENJPH=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_INSTALL_PKG_CONFIG=ON`,
         openh264: "-Dtests=disabled",
-        openjpeg: `-DBUILD_LUTS_GENERATOR=0 -DBUILD_UNIT_TESTS=0 -DBUILD_CODEC=0 -DBUILD_JPIP=0 -DBUILD_VIEWER=0 -DBUILD_JAVA=0 -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)}`,
-        openjph: `-DOJPH_ENABLE_TIFF_SUPPORT=OFF -DOJPH_DISABLE_AVX512=1 -DOJPH_BUILD_EXECUTABLES=OFF`,
-        pcre2: `-DPCRE2_BUILD_PCRE2_8=1 -DPCRE2_BUILD_PCRE2_16=1 -DPCRE2_BUILD_PCRE2_32=0 -DPCRE2_STATIC_PIC=0 -DPCRE2_DEBUG=0 -DPCRE2_DISABLE_PERCENT_ZT=1 -DPCRE2_EBCDIC=0 -DPCRE2_EBCDIC_NL25=0 -DPCRE2_EBCDIC_IGNORING_COMPILER=0 -DPCRE2_REBUILD_CHARTABLES=0 -DPCRE2_NEWLINE=LF -DPCRE2_SUPPORT_JIT=1 -DPCRE2_BUILD_PCRE2GREP=0 -DPCRE2_BUILD_TESTS=0 -DPCRE2_SUPPORT_BSR_ANYCRLF=1 -DPCRE2_SUPPORT_UNICODE=1 -DPCRE2GREP_SUPPORT_JIT=0 -DPCRE2GREP_SUPPORT_CALLOUT=0 -DPCRE2GREP_SUPPORT_CALLOUT_FORK=0 -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)} -DLIB_POSTFIX=""`,
-        projectm: "-DENABLE_DEBUG_POSTFIX=0 -DENABLE_PLAYLIST=0",
-        quickjs: `-DQJS_ENABLE_ASAN=0`,
+        openjpeg: `-DBUILD_LUTS_GENERATOR=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_CODEC=OFF -DBUILD_JPIP=OFF -DBUILD_VIEWER=OFF -DBUILD_JAVA=OFF -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)}`,
+        openjph: `-DOJPH_ENABLE_TIFF_SUPPORT=OFF -DOJPH_DISABLE_AVX512=ON -DOJPH_BUILD_EXECUTABLES=OFF`,
+        pcre2: `-DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=ON -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_STATIC_PIC=OFF -DPCRE2_DEBUG=OFF -DPCRE2_DISABLE_PERCENT_ZT=ON -DPCRE2_EBCDIC=OFF -DPCRE2_EBCDIC_NL25=OFF -DPCRE2_EBCDIC_IGNORING_COMPILER=OFF -DPCRE2_REBUILD_CHARTABLES=OFF -DPCRE2_NEWLINE=LF -DPCRE2_SUPPORT_JIT=ON -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_BSR_ANYCRLF=ON -DPCRE2_SUPPORT_UNICODE=ON -DPCRE2GREP_SUPPORT_JIT=OFF -DPCRE2GREP_SUPPORT_CALLOUT=OFF -DPCRE2GREP_SUPPORT_CALLOUT_FORK=OFF -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)} -DLIB_POSTFIX=""`,
+        projectm: "-DENABLE_DEBUG_POSTFIX=OFF -DENABLE_PLAYLIST=OFF",
+        quickjs: `-DQJS_ENABLE_ASAN=OFF`,
         rav1e: "--features capi,asm,threading",
-        xz: `-DXZ_NLS=0 -DXZ_SMALL=0 -DXZ_TOOL_XZDEC=0 -DXZ_TOOL_LZMADEC=0 -DXZ_TOOL_LZMAINFO=0 -DXZ_TOOL_XZ=0 -DXZ_DOC=0`,
-        "zlib-ng": `-DWITH_GTEST=0 -DWITH_FUZZERS=0 -DWITH_BENCHMARKS=0 -DWITH_BENCHMARK_APPS=0 -DWITH_GZFILEOP=0 -DZLIB_COMPAT=1 -DZLIB_ALIASES=1 -DWITH_OPTIM=1 -DWITH_ALL_FALLBACKS=0 -DWITH_REDUCED_MEM=0 -DWITH_NEW_STRATEGIES=1 -DWITH_CRC32_CHORBA=1 -DWITH_NATIVE_INSTRUCTIONS=0 -DWITH_MAINTAINER_WARNINGS=0 -DWITH_CODE_COVERAGE=0 -DWITH_INFLATE_STRICT=0 -DWITH_INFLATE_ALLOW_INVALID_DIST=0 -DINSTALL_UTILS=0`,
-        zstd: `-DZSTD_LEGACY_SUPPORT=1 -DZSTD_MULTITHREAD_SUPPORT=1 -DZSTD_BUILD_PROGRAMS=0 -DZSTD_BUILD_CONTRIB=0 -DZSTD_BUILD_TESTS=0 -DZSTD_BUILD_STATIC=${cmakeVal(!isDebug)} -DZSTD_BUILD_SHARED=${cmakeVal(isDebug)} -DZSTD_USE_STATIC_RUNTIME=${cmakeVal(!isDebug)}`,
+        xz: `-DXZ_NLS=OFF -DXZ_SMALL=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF -DXZ_TOOL_XZ=OFF -DXZ_DOC=OFF`,
+        "zlib-ng": `-DWITH_GTEST=OFF -DWITH_FUZZERS=OFF -DWITH_BENCHMARKS=OFF -DWITH_BENCHMARK_APPS=OFF -DWITH_GZFILEOP=OFF -DZLIB_COMPAT=ON -DZLIB_ALIASES=ON -DWITH_OPTIM=ON -DWITH_ALL_FALLBACKS=OFF -DWITH_REDUCED_MEM=OFF -DWITH_NEW_STRATEGIES=ON -DWITH_CRC32_CHORBA=ON -DWITH_NATIVE_INSTRUCTIONS=OFF -DWITH_MAINTAINER_WARNINGS=OFF -DWITH_CODE_COVERAGE=OFF -DWITH_INFLATE_STRICT=OFF -DWITH_INFLATE_ALLOW_INVALID_DIST=OFF -DINSTALL_UTILS=OFF`,
+        zstd: `-DZSTD_LEGACY_SUPPORT=ON -DZSTD_MULTITHREAD_SUPPORT=ON -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_CONTRIB=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_STATIC=${cmakeVal(!isDebug)} -DZSTD_BUILD_SHARED=${cmakeVal(isDebug)} -DZSTD_USE_STATIC_RUNTIME=${cmakeVal(!isDebug)}`,
     };
     return table[name] ?? "";
 }
 
-export async function posthook(name: string, path: string, options: CliOptions) {
-    const builtDebug = !options.onlyRelease,
-        builtRelease = !options.onlyDebug;
+/**
+ * Runs right after one variant (debug or release) was built, so the in-tree build artifacts of that variant
+ * (e.g. PDBs) still exist: buildVariants wipes the tree with `git clean -fdx` before the next variant.
+ */
+export async function posthook(name: string, path: string, isDebug: boolean) {
+    const root = buildRoot(isDebug),
+        { toolchain, useCodeview } = toolchainState(),
+        msvc = toolchain === "msvc";
+
     const table: Record<string, () => Promise<void>> = {
         dav1d: async () => {
-            if (WIN) {
-                if (builtRelease && toolchainState().toolchain === "msvc") {
-                    await $`cp ${`${REL_ROOT}/lib/libdav1d.a`} ${`${REL_ROOT}/lib/dav1d.lib`}`;
-                }
+            if (WIN && !isDebug && msvc) {
+                await copyLib(root, "libdav1d.a", "dav1d.lib");
             }
         },
         fltk: async () => {
-            if (builtRelease && WIN) {
-                await stripDllImport(`${REL_ROOT}/include/FL/Fl_Export.H`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/FL/Fl_Export.H`);
             }
         },
         icu: async () => {
-            if (builtRelease) {
-                if (WIN) {
-                    if (toolchainState().toolchain === "msvc") {
-                        await $`mv ${`${REL_ROOT}/bin/icudt.lib`} ${`${REL_ROOT}/lib/icudt.lib`}`;
-
-                        await $`mv ${`${REL_ROOT}/lib/icudt.lib`} ${`${REL_ROOT}/lib/cicudt.lib`}`;
-                        await $`mv ${`${REL_ROOT}/lib/icuuc.lib`} ${`${REL_ROOT}/lib/cicuuc.lib`}`;
-                        await $`mv ${`${REL_ROOT}/lib/icuin.lib`} ${`${REL_ROOT}/lib/cicuin.lib`}`;
-                        await $`mv ${`${REL_ROOT}/lib/icutest.lib`} ${`${REL_ROOT}/lib/cicutest.lib`}`;
-                        await $`mv ${`${REL_ROOT}/lib/icutu.lib`} ${`${REL_ROOT}/lib/cicutu.lib`}`;
-                    } else {
-                        await $`mv ${`${REL_ROOT}/bin/libicudt.a`} ${`${REL_ROOT}/lib/libicudt.a`}`;
-                    }
-
-                    await stripDllImport(`${REL_ROOT}/include/unicode/platform.h`);
-                }
+            if (!WIN) {
+                return;
             }
 
-            if (builtDebug) {
-                if (WIN) {
-                    if (toolchainState().toolchain === "msvc") {
-                        if (toolchainState().useCodeview) {
-                            await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/icu4c/source/bin`);
-                            await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/icu4c/source/lib`);
-                        }
-
-                        await $`mv ${`${DBG_ROOT}/lib/icudt.lib`} ${`${DBG_ROOT}/lib/cicudt.lib`}`;
-                        await $`mv ${`${DBG_ROOT}/lib/icuuc.lib`} ${`${DBG_ROOT}/lib/cicuuc.lib`}`;
-                        await $`mv ${`${DBG_ROOT}/lib/icuin.lib`} ${`${DBG_ROOT}/lib/cicuin.lib`}`;
-                        await $`mv ${`${DBG_ROOT}/lib/icutest.lib`} ${`${DBG_ROOT}/lib/cicutest.lib`}`;
-                        await $`mv ${`${DBG_ROOT}/lib/icutu.lib`} ${`${DBG_ROOT}/lib/cicutu.lib`}`;
+            if (msvc) {
+                if (isDebug) {
+                    if (useCodeview) {
+                        await movePdbs(`${path}/icu4c/source/bin`, `${root}/bin`);
+                        await movePdbs(`${path}/icu4c/source/lib`, `${root}/bin`);
                     }
+                } else {
+                    await $`mv ${`${root}/bin/icudt.lib`} ${`${root}/lib/icudt.lib`}`;
                 }
+
+                for (const lib of ["icudt", "icuuc", "icuin", "icutest", "icutu"]) {
+                    await $`mv ${`${root}/lib/${lib}.lib`} ${`${root}/lib/c${lib}.lib`}`;
+                }
+            } else if (!isDebug) {
+                await $`mv ${`${root}/bin/libicudt.a`} ${`${root}/lib/libicudt.a`}`;
+            }
+
+            if (!isDebug) {
+                await stripDllImport(`${root}/include/unicode/platform.h`);
             }
         },
         imagemagick: async () => {
-            if (builtDebug && toolchainState().toolchain === "msvc") {
-                if (toolchainState().useCodeview) {
-                    await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/MagickCore/.libs`);
-                    await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/MagickWand/.libs`);
-                    await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/Magick++/lib/.libs`);
+            if (isDebug && msvc) {
+                if (useCodeview) {
+                    await movePdbs(`${path}/MagickCore/.libs`, `${root}/bin`);
+                    await movePdbs(`${path}/MagickWand/.libs`, `${root}/bin`);
+                    await movePdbs(`${path}/Magick++/lib/.libs`, `${root}/bin`);
                 }
 
-                await $`cp "Magick++-7.Q8.dll.lib" "Magick++-7.Q8.lib"`.cwd(`${DBG_ROOT}/lib`);
-                await $`cp "MagickCore-7.Q8.dll.lib" "MagickCore-7.Q8.lib"`.cwd(`${DBG_ROOT}/lib`);
-                await $`cp "MagickWand-7.Q8.dll.lib" "MagickWand-7.Q8.lib"`.cwd(`${DBG_ROOT}/lib`);
+                for (const variant of ["Q8", "Q8HDRI", "Q16", "Q16HDRI"]) {
+                    for (const lib of ["Magick++", "MagickCore", "MagickWand"]) {
+                        await copyLib(root, `${lib}-7.${variant}.dll.lib`, `${lib}-7.${variant}.lib`);
+                    }
+                }
             }
         },
         imath: async () => {
-            if (WIN && toolchainState().toolchain !== "msvc" && builtDebug) {
-                await $`sd -s "/// @cond Doxygen_Suppress" "/*" ${`${DBG_ROOT}/include/Imath/ImathVec.h`}`;
-                await $`sd -s "/// @endcond Doxygen_Suppress" "*/" ${`${DBG_ROOT}/include/Imath/ImathVec.h`}`;
+            if (WIN && !msvc && isDebug) {
+                await $`sd -s "/// @cond Doxygen_Suppress" "/*" ${`${root}/include/Imath/ImathVec.h`}`;
+                await $`sd -s "/// @endcond Doxygen_Suppress" "*/" ${`${root}/include/Imath/ImathVec.h`}`;
             }
         },
         kvazaar: async () => {
-            if (WIN) {
-                if (builtRelease && toolchainState().toolchain === "msvc") {
-                    await stripDllImport(`${REL_ROOT}/include/kvazaar.h`);
-                }
+            if (WIN && !isDebug && msvc) {
+                await stripDllImport(`${root}/include/kvazaar.h`);
             }
         },
         libarchive: async () => {
-            if (WIN && builtRelease) {
-                await stripDllImport(`${REL_ROOT}/include/archive.h`);
-                await stripDllImport(`${REL_ROOT}/include/archive_entry.h`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/archive.h`);
+                await stripDllImport(`${root}/include/archive_entry.h`);
             }
         },
         libde265: async () => {
-            if (WIN && builtRelease) {
-                await stripDllImport(`${REL_ROOT}/include/libde265/de265.h`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/libde265/de265.h`);
             }
         },
         libheif: async () => {
-            if (builtRelease && WIN) {
-                await stripDllImport(`${REL_ROOT}/include/libheif/heif_export.h`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/libheif/heif_export.h`);
             }
         },
         "libjpeg-turbo": async () => {
-            if (toolchainState().toolchain === "msvc" && builtRelease) {
-                await copyLib(REL_ROOT, "jpeg-static.lib", "jpeg.lib");
+            if (msvc && !isDebug) {
+                await copyLib(root, "jpeg-static.lib", "jpeg.lib");
             }
         },
         libjxl: async () => {
-            if (builtRelease && WIN) {
-                await stripDllImport(`${REL_ROOT}/include/jxl/jxl_export.h`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/jxl/jxl_export.h`);
             }
         },
         libpng: async () => {
-            if (builtDebug) {
-                if (WIN) {
-                    if (toolchainState().toolchain === "msvc") {
-                        await copyLib(DBG_ROOT, "libpng16.lib", "png16.lib");
-                    } else {
-                        await copyLib(DBG_ROOT, "libpng16.dll.a", "libpng.dll.a");
-                    }
-                }
+            if (!WIN) {
+                return;
             }
 
-            if (builtRelease) {
-                if (WIN) {
-                    if (toolchainState().toolchain === "msvc") {
-                        await copyLib(REL_ROOT, "libpng.lib", "png16.lib");
-                    }
-                }
+            if (isDebug) {
+                await (msvc
+                    ? copyLib(root, "libpng16.lib", "png16.lib")
+                    : copyLib(root, "libpng16.dll.a", "libpng.dll.a"));
+            } else if (msvc) {
+                await copyLib(root, "libpng.lib", "png16.lib");
             }
         },
         libraw: async () => {
-            if (builtDebug) {
-                if (toolchainState().toolchain === "msvc") {
-                    if (toolchainState().useCodeview) {
-                        await $`mv *.pdb ${`${DBG_ROOT}/bin`}`.cwd(`${path}/lib/.libs`);
-                    }
-
-                    await $`cp "raw.dll.lib" "raw.lib"`.cwd(`${DBG_ROOT}/lib`);
-                    await $`cp "raw_r.dll.lib" "raw_r.lib"`.cwd(`${DBG_ROOT}/lib`);
+            if (isDebug && msvc) {
+                if (useCodeview) {
+                    await movePdbs(`${path}/lib/.libs`, `${root}/bin`);
                 }
 
-                await $`sd -s -- "-lstdc++" "" ${`${DBG_ROOT}/lib/pkgconfig/libraw.pc`}`;
-                await $`sd -s -- "-lstdc++" "" ${`${DBG_ROOT}/lib/pkgconfig/libraw_r.pc`}`;
+                await copyLib(root, "raw.dll.lib", "raw.lib");
+                await copyLib(root, "raw_r.dll.lib", "raw_r.lib");
             }
 
-            if (builtRelease) {
-                await $`sd -s -- "-lstdc++" "" ${`${REL_ROOT}/lib/pkgconfig/libraw.pc`}`;
-                await $`sd -s -- "-lstdc++" "" ${`${REL_ROOT}/lib/pkgconfig/libraw_r.pc`}`;
+            await $`sd -s -- "-lstdc++" "" ${`${root}/lib/pkgconfig/libraw.pc`}`;
+            await $`sd -s -- "-lstdc++" "" ${`${root}/lib/pkgconfig/libraw_r.pc`}`;
 
-                await stripDllImport(`${REL_ROOT}/include/libraw/libraw_types.h`);
+            if (!isDebug) {
+                await stripDllImport(`${root}/include/libraw/libraw_types.h`);
             }
         },
         libspng: async () => {
-            if (builtDebug) {
-                await $`sd -s -- "find_dependency(ZLIB REQUIRED)" "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)" ${`${DBG_ROOT}/lib/cmake/spng/SPNGConfig.cmake`}`;
-            }
-            if (builtRelease) {
-                await $`sd -s -- "find_dependency(ZLIB REQUIRED)" "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)" ${`${REL_ROOT}/lib/cmake/spng/SPNGConfig.cmake`}`;
-            }
+            await $`sd -s -- "find_dependency(ZLIB REQUIRED)" "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)" ${`${root}/lib/cmake/spng/SPNGConfig.cmake`}`;
         },
         libtool: async () => {
-            if (WIN && builtDebug) {
-                await $`sd -s -- "defined LIBLTDL_DLL_IMPORT" "1" ${`${DBG_ROOT}/include/libltdl/lt_system.h`}`;
+            if (WIN && isDebug) {
+                await $`sd -s -- "defined LIBLTDL_DLL_IMPORT" "1" ${`${root}/include/libltdl/lt_system.h`}`;
             }
         },
         libxml2: async () => {
-            if (toolchainState().toolchain === "msvc") {
-                if (builtDebug) {
-                    await copyLib(DBG_ROOT, "libxml2.lib", "xml2.lib");
-                }
-                if (builtRelease) {
-                    await copyLib(REL_ROOT, "libxml2.lib", "xml2.lib");
-                }
+            if (msvc) {
+                await copyLib(root, "libxml2.lib", "xml2.lib");
             }
         },
         "opencl-icd": async () => {
-            if (WIN) {
-                if (builtRelease) {
-                    if (toolchainState().toolchain !== "msvc") {
-                        await $`cp ${`${REL_ROOT}/lib/OpenCL.a`} ${`${REL_ROOT}/lib/libOpenCL.a`}`;
-                    }
-                }
+            if (WIN && !isDebug && !msvc) {
+                await copyLib(root, "OpenCL.a", "libOpenCL.a");
             }
         },
         openh264: async () => {
-            if (WIN) {
-                if (builtRelease && toolchainState().toolchain === "msvc") {
-                    await $`cp ${`${REL_ROOT}/lib/libopenh264.a`} ${`${REL_ROOT}/lib/openh264.lib`}`;
-                }
+            if (WIN && !isDebug && msvc) {
+                await copyLib(root, "libopenh264.a", "openh264.lib");
             }
         },
         openjpeg: async () => {
-            if (WIN) {
-                if (builtRelease && toolchainState().toolchain === "msvc") {
-                    await stripDllImport(`${REL_ROOT}/include/openjpeg-2.5/openjpeg.h`);
-                }
+            if (WIN && !isDebug && msvc) {
+                await stripDllImport(`${root}/include/openjpeg-2.5/openjpeg.h`);
             }
         },
         pcre2: async () => {
-            if (WIN && builtRelease) {
-                await stripDllImport(`${REL_ROOT}/include/pcre2.h`);
-                await $`sd -s -- "STATIC IMPORTED" "STATIC IMPORTED GLOBAL" ${`${REL_ROOT}/lib/cmake/pcre2/pcre2-targets.cmake`}`;
+            if (!isDebug) {
+                if (WIN) {
+                    await stripDllImport(`${root}/include/pcre2.h`);
+                    await $`sd -s -- "STATIC IMPORTED" "STATIC IMPORTED GLOBAL" ${`${root}/lib/cmake/pcre2/pcre2-targets.cmake`}`;
+                }
+                return;
             }
 
-            if (builtDebug) {
-                // for libgit2
-                if (toolchainState().toolchain === "msvc") {
-                    await $`cp ${`${DBG_ROOT}/lib/pcre2-8d.lib`} ${`${DBG_ROOT}/lib/pcre2-8.lib`}`;
-                    await $`cp ${`${DBG_ROOT}/lib/pcre2-16d.lib`} ${`${DBG_ROOT}/lib/pcre2-16.lib`}`;
-                    await $`cp ${`${DBG_ROOT}/lib/pcre2-posixd.lib`} ${`${DBG_ROOT}/lib/pcre2-posix.lib`}`;
-                } else {
-                    await $`cp ${`${DBG_ROOT}/lib/libpcre2-8d.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-8.dll.a`}`;
-                    await $`cp ${`${DBG_ROOT}/lib/libpcre2-16d.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-16.dll.a`}`;
-                    await $`cp ${`${DBG_ROOT}/lib/libpcre2-posixd.dll.a`} ${`${DBG_ROOT}/lib/libpcre2-posix.dll.a`}`;
-                }
+            // for libgit2
+            if (msvc) {
+                await copyLib(root, "pcre2-8d.lib", "pcre2-8.lib");
+                await copyLib(root, "pcre2-16d.lib", "pcre2-16.lib");
+                await copyLib(root, "pcre2-posixd.lib", "pcre2-posix.lib");
+            } else {
+                await copyLib(root, "libpcre2-8d.dll.a", "libpcre2-8.dll.a");
+                await copyLib(root, "libpcre2-16d.dll.a", "libpcre2-16.dll.a");
+                await copyLib(root, "libpcre2-posixd.dll.a", "libpcre2-posix.dll.a");
             }
         },
         rav1e: async () => {
-            if (builtDebug) {
-                if (toolchainState().toolchain === "msvc") {
-                    await $`mv ${`${DBG_ROOT}/lib/rav1e.dll.lib`} ${`${DBG_ROOT}/lib/rav1e.lib`}`;
-                }
+            if (isDebug && msvc) {
+                await $`mv ${`${root}/lib/rav1e.dll.lib`} ${`${root}/lib/rav1e.lib`}`;
             }
         },
         xz: async () => {
-            if (WIN && builtRelease) {
-                await stripDllImport(`${REL_ROOT}/include/lzma.h`);
+            if (WIN && !isDebug) {
+                await stripDllImport(`${root}/include/lzma.h`);
             }
         },
         "zlib-ng": async () => {
-            if (builtDebug) {
-                if (WIN) {
-                    if (toolchainState().toolchain === "msvc") {
-                        await $`cp ${`${DBG_ROOT}/lib/zlib.lib`} ${`${DBG_ROOT}/lib/z.lib`}`;
-                    } else {
-                        await $`cp ${`${DBG_ROOT}/lib/libzlib.dll.a`} ${`${DBG_ROOT}/lib/libz.dll.a`}`;
-                    }
-                }
+            if (WIN && isDebug) {
+                await (msvc ? copyLib(root, "zlib.lib", "z.lib") : copyLib(root, "libzlib.dll.a", "libz.dll.a"));
             }
         },
     };
@@ -612,6 +589,8 @@ export async function prehook(name: string, path: string) {
         bzip2: async () => {
             if (toolchainState().toolchain === "msvc") {
                 await $`sd "DESCRIPTION.+" "" libbz2.def`.cwd(path);
+                // LIBRARY sets the DLL name recorded in the import lib; upstream's LIBBZ2 makes consumers load LIBBZ2.dll.
+                await $`sd "LIBRARY.+" "LIBRARY bz2" libbz2.def`.cwd(path);
             }
         },
         "double-conversion": async () => {
@@ -627,6 +606,13 @@ export async function prehook(name: string, path: string) {
                 path,
             );
 
+            // mlpdsp_init.c defines the ff_mlp_firorder_*/ff_mlp_iirorder_* jump labels inside an inline-asm block and
+            // references them from C. With -flto=full the C reference becomes an undefined external in the bitcode and
+            // the labels only exist as local symbols after late codegen, so linking against avcodec.lib fails with
+            // "undefined symbol: ff_mlp_firorder_*" unless /FORCE:UNRESOLVED is passed. Building this one object
+            // without LTO keeps the assembler resolving the labels locally, as it does in a regular build.
+            await appendFile(`${path}/libavcodec/x86/Makefile`, "\n$(SUBDIR)x86/mlpdsp_init.o: CFLAGS += -fno-lto\n");
+
             if (toolchainState().toolchain === "msvc") {
                 await $`sd -s -- ${"$AR rcs"} "llvm-ar rcs" compat/windows/makedef`.cwd(path);
                 await $`sd ${"SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'"} ${`SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)${toolchainState().useCodeview ? "$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.pdb)'" : "'"}`} configure`.cwd(
@@ -635,24 +621,6 @@ export async function prehook(name: string, path: string) {
                 await $`sd -s -- ${"SLIB_INSTALL_EXTRA_LIB='$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.def)'"} ${"SLIB_INSTALL_EXTRA_LIB='$(SLIBNAME:$(SLIBSUF)=.lib)'"} configure`.cwd(
                     path,
                 );
-            }
-        },
-        glew: async () => {
-            if (WIN) {
-                if (toolchainState().toolchain === "msvc") {
-                    await $`sd -s "target_compile_options (glew PRIVATE -fno-builtin -fno-stack-protector)" "" build/cmake/CMakeLists.txt`.cwd(
-                        path,
-                    );
-                    await $`sd -s "target_compile_options (glew_s PRIVATE -fno-builtin -fno-stack-protector)" "" build/cmake/CMakeLists.txt`.cwd(
-                        path,
-                    );
-
-                    await $`sd -s "target_link_libraries (glew LINK_PRIVATE -nostdlib)" "target_link_libraries (glew LINK_PRIVATE -lmsvcrt -lvcruntime)" build/cmake/CMakeLists.txt`.cwd(
-                        path,
-                    );
-                }
-
-                await $`sd -s "set (requireslib glu)" "# " build/cmake/CMakeLists.txt`.cwd(path);
             }
         },
         harfbuzz: async () => {
@@ -669,6 +637,14 @@ export async function prehook(name: string, path: string) {
             await $`sd -s -- "STATIC_PREFIX = s" "STATIC_PREFIX =" "icu4c/source/icudefs.mk.in"`.cwd(path);
 
             await $`sd -s -- "OUTPUTFILE=icupkg.inc" "OUTPUTFILE=icupkg.inc\nCFLAGS += -fno-lto -fno-whole-program-vtables\nCXXFLAGS += -fno-lto -fno-whole-program-vtables\nLDFLAGSICUDT += -fno-lto -fno-whole-program-vtables" ${`${path}/icu4c/source/data/pkgdataMakefile.in`}`;
+
+            // Builds go to another device than the final install dir, and NTFS can't symlink across devices: install copies instead.
+            for (const dir of [".", "common", "i18n", "io", "stubdata", "tools/toolutil"]) {
+                await $`sd -s -- "ln -s" "cp -rf" Makefile.in`.cwd(`${path}/icu4c/source/${dir}`);
+            }
+            await $`sd -s -- '#define LN_CMD "ln -s"' '#define LN_CMD "cp -f"' icu4c/source/tools/pkgdata/pkgdata.cpp`.cwd(
+                path,
+            );
 
             if (toolchainState().toolchain === "msvc") {
                 await $`git apply ${`${ROOT}/patches/plurrule.patch`}`.cwd(path);
@@ -875,6 +851,10 @@ async function buildAutoconf(
 
     const libsArg = !path.includes("ffmpeg") ? `LIBS="${libs}"` : "";
 
+    // Archive-sourced libraries (e.g. libraw) build in-tree and are never `git clean`ed between variants, so make
+    // would reuse the other variant's objects (debug's -DLIBRAW_BUILDLIB ones in a "static" release build).
+    await bash`cd ${msysPath} && make distclean`.noThrow(); // fails harmlessly on a fresh tree
+
     await bash`cd ${msysPath} && ${extraEnv} ${libsArg} ${configureCommand} ${configureArgs} ${buildType} --prefix=${toMsysPath(prefix)} ${libtoolFlags}`;
 
     if (libtool) {
@@ -987,7 +967,7 @@ export async function buildCMake(name: string, path: string, sourceSubdir: strin
     const cwd = sourceSubdir ? `${path}/${sourceSubdir}` : path,
         dir = buildDir(isDebug),
         toolchainFile = isDebug ? DEBUG_TOOLCHAIN : RELEASE_TOOLCHAIN;
-    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=0 -DBUILD_DOCS=0 -DBUILD_DOC=0 -DBUILD_EXAMPLE=0 -DBUILD_EXAMPLES=0 -DBUILD_TESTING=0 -DBUILD_TESTS=0 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(arghook(name, isDebug))}`.cwd(
+    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(arghook(name, isDebug))}`.cwd(
         cwd,
     );
     await $`cmake --build ${dir} -j`.cwd(cwd);

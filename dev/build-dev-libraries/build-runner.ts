@@ -113,7 +113,15 @@ async function buildVariants(
 
         switch (library.build) {
             case "Custom":
-                await customBuild(library.name!, path, isDebug);
+                await customBuild(library.name!, path, isDebug, async (sub, build) => {
+                    const subKey = `${vkey}:${sub}`;
+                    if (alreadyBuilt(state, subKey, prefix, pin, options)) {
+                        consola.info(pc.cyan(`[${library.name!}] ${sub} (${isDebug ? "debug" : "release"}) already built, skipping.`));
+                        return;
+                    }
+                    await build();
+                    await markBuilt(state, subKey, prefix, pin, options.toolchain);
+                });
                 break;
             case "Meson":
                 await buildMeson(library.name!, path, isDebug);
@@ -125,10 +133,11 @@ async function buildVariants(
                 await buildCMake(library.name!, path, library.sourceSubdir ?? "", isDebug);
         }
 
+        // Per variant, before markBuilt: the next variant's `git clean -fdx` wipes this one's in-tree artifacts
+        // (PDBs), and a failed hook must not leave the variant recorded as built.
+        await posthook(library.name!, path, isDebug);
         await markBuilt(state, vkey, prefix, pin, options.toolchain);
     }
-
-    await posthook(library.name!, path, options);
 }
 
 async function loadBuildState(): Promise<BuildState> {
@@ -219,7 +228,10 @@ async function invokeRepoBuild(library: Library, options: CliOptions, state: Bui
             await $`git clone --branch ${pin} ${library.url} ${path}`;
         }
     } else {
-        await $`git fetch origin tag ${library.tag}`.cwd(path);
+        if (library.tag !== "main" && library.tag !== "master") {
+            await $`git fetch --depth=1 origin tag ${library.tag}`.cwd(path);
+        }
+
         await $`git checkout ${pin} --force`.cwd(path);
     }
 
