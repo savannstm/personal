@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
-import { BUILD_STATE_FILE, buildRoot, DBG_ROOT, REL_ROOT, REPOS_ROOT, WIN } from "./config.ts";
+import { BUILD_STATE_FILE, buildRoot, DBG_ROOT, MSYS2_ROOT, REL_ROOT, WIN } from "./config.ts";
 import { buildCMake, buildMeson, buildRust, customBuild, posthook, prehook } from "./hooks.ts";
 import { getPin, LIBRARIES, resolveLibraryName, shouldBuildLibrary } from "./libraries.ts";
 import { configureToolchain, updateEnv } from "./toolchain.ts";
@@ -25,6 +25,10 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     projectm: { asan: false, debugOpt: false, fastmath: false, rtti: false },
     qt5: { asan: true, debugOpt: false, fastmath: true, rtti: true },
     "quickjs-ng": { asan: false, debugOpt: true, fastmath: false, rtti: false },
+    "ruby-1.8.1": { asan: false, debugOpt: true, fastmath: false, rtti: true },
+    "ruby-1.8.7": { asan: false, debugOpt: true, fastmath: false, rtti: true },
+    "ruby-1.9.2": { asan: false, debugOpt: true, fastmath: false, rtti: true },
+    "ruby-1.9.3": { asan: false, debugOpt: true, fastmath: false, rtti: true },
     upx: { asan: false, debugOpt: true, fastmath: true, march: "native", mtune: "native", rtti: true },
 };
 
@@ -39,12 +43,12 @@ export async function buildRepos(options: CliOptions) {
         process.exit(0);
     }
 
-    if (!existsSync(REPOS_ROOT)) {
-        await $`mkdir -p ${REPOS_ROOT}`;
+    if (!existsSync(options.reposRoot)) {
+        await $`mkdir -p ${options.reposRoot}`;
     }
 
     if (WIN) {
-        await $`mv C:/msys64/usr/bin/link.exe C:/msys64/usr/bin/!link.exe`.noThrow();
+        await $`mv ${MSYS2_ROOT}/usr/bin/link.exe ${MSYS2_ROOT}/usr/bin/!link.exe`.noThrow();
     }
 
     const state = await loadBuildState();
@@ -116,7 +120,11 @@ async function buildVariants(
                 await customBuild(library.name!, path, isDebug, async (sub, build) => {
                     const subKey = `${vkey}:${sub}`;
                     if (alreadyBuilt(state, subKey, prefix, pin, options)) {
-                        consola.info(pc.cyan(`[${library.name!}] ${sub} (${isDebug ? "debug" : "release"}) already built, skipping.`));
+                        consola.info(
+                            pc.cyan(
+                                `[${library.name!}] ${sub} (${isDebug ? "debug" : "release"}) already built, skipping.`,
+                            ),
+                        );
                         return;
                     }
                     await build();
@@ -185,7 +193,7 @@ async function markBuilt(
 }
 
 async function invokeRepoBuild(library: Library, options: CliOptions, state: BuildState) {
-    const path = `${REPOS_ROOT}/${library.name}`,
+    const path = `${options.reposRoot}/${library.name}`,
         pin = getPin(library);
 
     const variants = options.onlyDebug === options.onlyRelease ? [true, false] : options.onlyDebug ? [true] : [false];
@@ -211,8 +219,10 @@ async function invokeRepoBuild(library: Library, options: CliOptions, state: Bui
         }
         if (WIN) {
             await $`"C:/Windows/System32/tar.exe" -xf ${archivePath} -C ${path}`;
-        } else {
+        } else if (archivePath.endsWith(".zip")) {
             await $`unzip -o ${archivePath} -d ${path}`;
+        } else {
+            await $`tar -xf ${archivePath} -C ${path}`;
         }
 
         const buildPath = `${path}/${library.archiveSubdir}`;
@@ -228,8 +238,10 @@ async function invokeRepoBuild(library: Library, options: CliOptions, state: Bui
             await $`git clone --branch ${pin} ${library.url} ${path}`;
         }
     } else {
-        if (library.tag !== "main" && library.tag !== "master") {
+        if (library.tag !== "main" && library.tag !== "master" && library.tag !== "devel") {
             await $`git fetch --depth=1 origin tag ${library.tag}`.cwd(path);
+        } else {
+            await $`git pull`.cwd(path);
         }
 
         await $`git checkout ${pin} --force`.cwd(path);

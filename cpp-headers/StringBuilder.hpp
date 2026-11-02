@@ -1,10 +1,5 @@
 #pragma once
 
-// Allocation-once string concatenation: `"a"sv % name % 42` builds an expression tree, the string is sized in one pass
-// and filled in a second. Numbers go through Numbers.hpp (itos/ftos).
-//
-// Requires: "Aliases.hpp", "Numbers.hpp".
-
 #include "Aliases.hpp"
 #include "Numbers.hpp"
 
@@ -16,9 +11,9 @@ concept Arithmetic = (std::integral<std::remove_cvref_t<T>> || std::floating_poi
                      !std::same_as<std::remove_cvref_t<T>, bool> && !std::same_as<std::remove_cvref_t<T>, char>;
 
 template <typename T>
-concept ExprNode = requires(const T& t, char* p) {
-    { t.size() } -> std::convertible_to<usize>;
-    { t.write(p) } -> std::same_as<char*>;
+concept ExprNode = requires(const T& node, char* out) {
+    { node.size() } -> std::convertible_to<usize>;
+    { node.write(out) } -> std::same_as<char*>;
 };
 
 // string / string_view / const char* / char arrays.
@@ -111,6 +106,8 @@ struct Builder {
 
     [[nodiscard]] auto size() const noexcept -> usize { return node.size(); }
 
+    // Implicit on purpose: `string s = "a" % value;` converts the chain directly.
+    // NOLINTNEXTLINE(misc-explicit-constructor)
     [[nodiscard]] operator string() const {
         string result;
         const usize size = node.size();
@@ -121,7 +118,7 @@ struct Builder {
         return result;
     }
 
-    [[nodiscard]] auto str() const -> string { return scast<string>(*this); }
+    [[nodiscard]] auto str() const -> string { return static_cast<string>(*this); }
 };
 
 template <typename L, typename R>
@@ -130,22 +127,23 @@ template <typename L, typename R>
         (IsBuilder<L> || IsBuilder<R> || !(Arithmetic<L> && Arithmetic<R>))
     )
 [[nodiscard]] constexpr auto operator%(L&& lhs, R&& rhs) {
-    auto ln = make_leaf(std::forward<L>(lhs));
-    auto rn = make_leaf(std::forward<R>(rhs));
-    using LN = decltype(ln);
-    using RN = decltype(rn);
-    return Builder<Cat<LN, RN>>{ Cat<LN, RN>{ std::move(ln), std::move(rn) } };
+    auto lhsLeaf = make_leaf(std::forward<L>(lhs));
+    auto rhsLeaf = make_leaf(std::forward<R>(rhs));
+    using LN = decltype(lhsLeaf);
+    using RN = decltype(rhsLeaf);
+    return Builder<Cat<LN, RN>>{ Cat<LN, RN>{ std::move(lhsLeaf), std::move(rhsLeaf) } };
 }
 
 template <typename... Ts>
 [[nodiscard]] auto cat(Ts&&... args) -> string {
     std::tuple leaves{ make_leaf(std::forward<Ts>(args))... };
-    const usize total = std::apply([](const auto&... ls) -> auto { return (ls.size() + ... + usize{ 0 }); }, leaves);
+    const usize total =
+        std::apply([](const auto&... leaf) -> auto { return (leaf.size() + ... + usize{ 0 }); }, leaves);
 
     string result;
     result.resize_and_overwrite(total, [&](char* buf, usize) -> auto {
         char* ptr = buf;
-        std::apply([&](const auto&... ls) { ((ptr = ls.write(ptr)), ...); }, leaves);
+        std::apply([&](const auto&... leaf) -> void { ((ptr = leaf.write(ptr)), ...); }, leaves);
         return total;
     });
     return result;
@@ -154,11 +152,12 @@ template <typename... Ts>
 template <typename... Ts>
 void append(string& dst, Ts&&... args) {
     std::tuple leaves{ make_leaf(std::forward<Ts>(args))... };
-    const usize extra = std::apply([](const auto&... ls) -> auto { return (ls.size() + ... + usize{ 0 }); }, leaves);
+    const usize extra =
+        std::apply([](const auto&... leaf) -> auto { return (leaf.size() + ... + usize{ 0 }); }, leaves);
     const usize old = dst.size();
     dst.resize_and_overwrite(old + extra, [&](char* buf, usize) -> auto {
         char* ptr = buf + old;
-        std::apply([&](const auto&... ls) -> auto { ((ptr = ls.write(ptr)), ...); }, leaves);
+        std::apply([&](const auto&... leaf) -> auto { ((ptr = leaf.write(ptr)), ...); }, leaves);
         return old + extra;
     });
 }

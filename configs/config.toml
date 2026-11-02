@@ -2,56 +2,73 @@
 build-std = ["core", "alloc", "std", "panic_abort"]
 profile-rustflags = true
 
-[target.x86-64-pc-windows-msvc]
+[build]
+build-dir = "C:/Users/savannstm/cargo-build"
+
+[target.x86_64-pc-windows-msvc]
 rustflags = [
-    "-Zunstable-options",
     "-Clinker=lld-link",
-    "-Clinker-features=-lld",
     "-Clink-arg=-fuse-ld=lld",
     "-Ctarget-cpu=x86-64-v3",
+    "-Ctarget-feature=+aes",
+    "-Zunstable-options",
 ]
 
-[profile.win-debug]
-inherits = "dev"
+[target.x86_64-pc-windows-gnullvm]
+linker = "clang"
 rustflags = [
-    "-Zunstable-options",
-    "-Clinker=lld-link",
-    "-Clinker-features=-lld",
+    "-Clinker=clang",
     "-Clink-arg=-fuse-ld=lld",
     "-Ctarget-cpu=x86-64-v3",
+    "-Ctarget-feature=+aes",
+    "-Lnative=C:/dev-clang/release/lib",
+    "-Zunstable-options",
+]
 
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-Clinker=clang",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+    "-Ctarget-feature=+aes",
+]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = [
+    "-Clinker=clang",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=x86-64-v3",
+    "-Ctarget-feature=+aes",
+]
+
+[profile.win-msvc-debug]
+inherits = "dev"
+panic = "abort"
+rustflags = [
     "-Clink-arg=-DEBUG:FULL",
     "-Clink-arg=-OPT:NOREF",
     "-Clink-arg=-OPT:NOICF",
     "-Clink-arg=-OPT:NOLBR",
+    "-Lnative=C:/dev/debug/lib",
 ]
 
-[profile.win-release]
+[profile.win-clang-debug]
+inherits = "dev"
+panic = "abort"
+rustflags = ["-Lnative=C:/dev-clang/debug/lib"]
+
+[profile.win-msvc-release]
 inherits = "release"
 lto = "fat"
-debug = false
-debug-assertions = false
-overflow-checks = false
 codegen-units = 1
-opt-level = 3
 panic = "abort"
 strip = "symbols"
 rustflags = [
-    "-Zunstable-options",
-    "-Clinker=lld-link",
-    "-Clinker-features=-lld",
-    "-Clink-arg=-fuse-ld=lld",
-    "-Ctarget-cpu=x86-64-v3",
-    "-Zdylib-lto",
-    "-Cpanic=abort",
-    "-Cprefer-dynamic=no",
     "-Ctarget-feature=+crt-static",
     "-Clinker-plugin-lto",
+    "-Cprefer-dynamic=no",
     "-Cembed-bitcode=yes",
-    "-Ccodegen-units=1",
-    "-Copt-level=3",
-    "-Cstrip=symbols",
-    "-Cdebuginfo=0",
+    "-Zdylib-lto",
     "-Zdefault-visibility=hidden",
 
     "-Cllvm-args=-function-sections=true",
@@ -72,38 +89,74 @@ rustflags = [
     "-Clink-arg=-NOCOFFGRPINFO",
     "-Clink-arg=-EMITPOGOPHASEINFO",
     "-Clink-arg=-EMITVOLATILEMETADATA:NO",
+    "-Clink-arg=-Brepro",
+    "-Clink-arg=-OPT:LLDLTO=3",
+    "-Lnative=C:/dev/release/lib",
+]
+
+[profile.win-clang-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+rustflags = [
+    "-Ctarget-feature=+crt-static",
+    "-Clinker-plugin-lto",
+    "-Cprefer-dynamic=no",
+    "-Cembed-bitcode=yes",
+    "-Zdylib-lto",
+    "-Zdefault-visibility=hidden",
+
+    "-Cllvm-args=-function-sections=true",
+    "-Cllvm-args=-data-sections=true",
+    "-Cllvm-args=-fp-contract=fast",
+    "-Cllvm-args=-denormal-fp-math=positive-zero",
+    "-Cllvm-args=-enable-no-trapping-fp-math=true",
+    "-Cllvm-args=-unroll-threshold=750",
+
+    "-Clink-arg=-Wl,-O3",
+    "-Clink-arg=-Wl,--lto-O3",
+    "-Clink-arg=-Wl,--gc-sections",
+    "-Clink-arg=-Wl,--as-needed",
+    "-Clink-arg=-Wl,--strip-all",
+    "-Clink-arg=-Wl,--build-id=none",
+    "-Clink-arg=-Wl,--icf=all",
+    "-Clink-arg=-Wl,--no-insert-timestamp",
+    "-Lnative=C:/dev-clang/release/lib",
+]
+
+[profile.wasm-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+rustflags = [
+    "-Zunstable-options",
+    "-Zdefault-visibility=hidden",
+
+    "-Cllvm-args=-function-sections=true",
+    "-Cllvm-args=-data-sections=true",
+    "-Cllvm-args=-fp-contract=fast",
+    "-Cllvm-args=-denormal-fp-math=positive-zero",
+    "-Cllvm-args=-enable-no-trapping-fp-math=true",
+    "-Cllvm-args=-unroll-threshold=750",
 ]
 
 [profile.linux-debug]
 inherits = "dev"
-rustflags = [
-    "-Clinker=clang",
-    "-Clinker-features=-lld",
-    "-Clink-arg=-fuse-ld=lld",
-    "-Ctarget-cpu=x86-64-v3",
-]
 
 [profile.linux-release]
 inherits = "release"
 lto = "fat"
-debug = false
-debug-assertions = false
-overflow-checks = false
 codegen-units = 1
-opt-level = 3
 panic = "abort"
 strip = "symbols"
 rustflags = [
-    "-Clinker=clang",
-    "-Clinker-features=-lld",
-    "-Clink-arg=-fuse-ld=lld",
-    "-Ctarget-cpu=x86-64-v3",
-    "-Cpanic=abort",
+    "-Clinker-plugin-lto",
     "-Cprefer-dynamic=no",
-    "-Ccodegen-units=1",
-    "-Copt-level=3",
-    "-Cstrip=symbols",
-    "-Cdebuginfo=0",
+    "-Cembed-bitcode=yes",
 
     "-Cllvm-args=-function-sections=true",
     "-Cllvm-args=-data-sections=true",

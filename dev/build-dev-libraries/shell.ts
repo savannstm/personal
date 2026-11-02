@@ -1,6 +1,6 @@
 import { $ } from "dax";
 
-import { WIN } from "./config.ts";
+import { MSYS2_ROOT, WIN } from "./config.ts";
 
 export const raw = (text: string) => $.rawArg(text);
 
@@ -28,5 +28,5 @@ export function bash(strings: TemplateStringsArray, ...values: any[]) {
     const pkgConfigExport = `export PKG_CONFIG_PATH="${toMsysList("PKG_CONFIG_PATH")}:$PKG_CONFIG_PATH"`;
     const msvcExports = `${includeLibExports} && ${pkgConfigExport}`;
 
-    return $`MSYS2_PATH_TYPE=inherit C:/msys64/usr/bin/bash.exe -lc ${`${msvcExports} && ${innerCommand}`}`;
+    return $`MSYS2_PATH_TYPE=inherit ${MSYS2_ROOT}/usr/bin/bash.exe -lc ${`${msvcExports} && ${innerCommand}`}`;
 }

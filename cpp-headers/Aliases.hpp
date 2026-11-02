@@ -1,7 +1,6 @@
 #pragma once
 
-// Qt-free reference Aliases.hpp. Every header in this directory includes "Aliases.hpp" and expects at least what is
-// declared here. A project's own Aliases.hpp may add more (enchantum, Qt side, ...), but must keep these names.
+#include "enchantum_single_header.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,10 +8,12 @@
 #include <bit>
 #include <bitset>
 #include <climits>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -32,6 +33,7 @@
 #include <vector>
 
 using namespace std::literals::string_view_literals;
+using namespace enchantum::bitwise_operators;
 
 namespace fs = std::filesystem;
 namespace views = std::views;
@@ -66,6 +68,8 @@ using std::array;
 using std::bitset;
 using std::cerr;
 using std::cout;
+using std::deque;
+using std::error_code;
 using std::expected;
 using std::format;
 using std::function;
@@ -87,26 +91,31 @@ using std::vector;
 using std::wstring;
 using std::wstring_view;
 
+using std::ceil;
+using std::ceilf;
+using std::ceill;
 using std::clamp;
+using std::log;
+using std::log10;
+using std::log10f;
+using std::log10l;
+using std::log2;
+using std::log2f;
+using std::log2l;
+using std::logf;
+using std::logl;
+using std::lround;
+using std::lroundf;
+using std::lroundl;
 using std::max;
 using std::min;
+using std::round;
+using std::roundf;
+using std::roundl;
 
 template <typename T, typename E>
 using Result = std::expected<T, E>;
 template <typename E>
 using Err = std::unexpected<E>;
 
-template <typename O, typename T>
-[[nodiscard]] constexpr auto scast(T&& arg) -> O {
-    return static_cast<O>(std::forward<T>(arg));
-}
-
-template <typename O, typename T>
-[[nodiscard]] constexpr auto rcast(T&& arg) -> O {
-    return reinterpret_cast<O>(std::forward<T>(arg));
-}
-
-template <typename O, typename T>
-[[nodiscard]] constexpr auto ccast(T&& arg) -> O {
-    return const_cast<O>(std::forward<T>(arg));
-}
+using FilenameArray = array<char, 16>;

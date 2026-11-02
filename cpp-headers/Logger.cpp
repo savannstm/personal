@@ -27,8 +27,13 @@
 namespace {
 constexpr auto APP_NAME_VIEW = string_view(APP_NAME);
 
-// Bounds the live file, and with the rotation in openFile() bounds the whole footprint at twice this.
+// Bounds the live file, and with the rotation in openFile() bounds the shared
+// log's footprint at twice this.
 constexpr u64 MAX_LOG_BYTES = u64{ 1 } << 20;
+
+// Per-process names never repeat, so the size rotation never meets an old file:
+// the newest this many (the current run included) are kept instead.
+constexpr usize MAX_PER_PROCESS_LOGS = 5;
 
 constexpr string_view RESET_COLOR = "\x1b[0m";
 
@@ -37,13 +42,17 @@ std::ofstream logFile;
 bool colored = false;
 bool enabled = false;
 
-// Lines written before openFile() picked a destination. Anything logged early in startup belongs in the
-// file as much as anything after it. Cleared once, at open.
+// Lines written before openFile() picked a destination. Anything logged early
+// in startup belongs in the file as much as anything after it. Cleared once, at
+// open; capped at MAX_LOG_BYTES, since openFile() may never run.
 vector<string> pending;
+u64 pendingBytes = 0;
 
-// what the file already holds plus what this run has added; the cap is checked per line, since the
-// startup check alone lets one long session grow without bound
+// what the file already holds plus what this run has added; the cap is checked
+// per line, since the startup check alone lets one long session grow without
+// bound
 u64 logBytes = 0;
+// the file takes no more lines: the cap was reached, or it could not be opened
 bool logFull = false;
 
 auto processId() -> u32 {
@@ -86,7 +95,7 @@ constexpr auto sameChar(const char left, const char right) -> bool {
             return '/';
         }
 
-        return chr >= 'A' && chr <= 'Z' ? char(chr - 'A' + 'a') : chr;
+        return chr >= 'A' && chr <= 'Z' ? static_cast<char>(chr - 'A' + 'a') : chr;
     };
 
     return fold(left) == fold(right);
@@ -115,8 +124,9 @@ auto relativeToRoot(const char* const file) -> string_view {
     return relative;
 }
 
-// function_name() is a whole signature. Everything before the argument list, past the last space,
-// is the qualified name - which is what is worth reading in a log line.
+// function_name() is a whole signature. Everything before the argument list,
+// past the last space, is the qualified name - which is what is worth reading
+// in a log line.
 auto functionName(const char* const signature) -> string_view {
     auto full = string_view(signature);
 
@@ -144,6 +154,41 @@ auto locationText(const std::source_location& where) -> string {
 
     return out;
 }
+
+// Deletes the oldest "<APP_NAME>-<digits>.log" files in `directory`, leaving room for the one about to be created.
+void prunePerProcessLogs(const path& directory) {
+    const string prefix = (APP_NAME_VIEW % "-"sv).str();
+    constexpr auto suffix = ".log"sv;
+
+    vector<pair<fs::file_time_type, path>> logs;
+    std::error_code error;
+
+    auto entries = fs::directory_iterator(directory, error);
+
+    for (; !error && entries != fs::directory_iterator(); entries.increment(error)) {
+        const string name = entries->path().filename().string();
+
+        if (name.size() <= prefix.size() + suffix.size() || !name.starts_with(prefix) || !name.ends_with(suffix)) {
+            continue;
+        }
+
+        const string_view digits = string_view(name).substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+
+        if (ranges::all_of(digits, [](const char chr) -> bool { return chr >= '0' && chr <= '9'; })) {
+            logs.emplace_back(entries->last_write_time(error), entries->path());
+        }
+    }
+
+    if (logs.size() < MAX_PER_PROCESS_LOGS) {
+        return;
+    }
+
+    ranges::sort(logs, [](const auto& left, const auto& right) -> bool { return left.first > right.first; });
+
+    for (const auto& [time, file] : logs | views::drop(MAX_PER_PROCESS_LOGS - 1)) {
+        fs::remove(file, error);
+    }
+}
 }  // namespace
 
 void logging::init(const bool enable) {
@@ -154,13 +199,14 @@ void logging::init(const bool enable) {
     }
 
 #ifdef _WIN32
-    // a GUI-subsystem exe has no console of its own; attach the parent's if launched from one
+    // a GUI-subsystem exe has no console of its own; attach the parent's if
+    // launched from one
     if (AttachConsole(ATTACH_PARENT_PROCESS) != 0) {
         FILE* stream = nullptr;
         freopen_s(&stream, "CONOUT$", "w", stdout);
         freopen_s(&stream, "CONOUT$", "w", stderr);
 
-        const HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
+        void* const handle = GetStdHandle(STD_ERROR_HANDLE);
         DWORD mode = 0;
 
         colored = GetConsoleMode(handle, &mode) != 0 &&
@@ -184,9 +230,12 @@ void logging::openFile(const LogFile which, const path& directory) {
 
     std::error_code error;
 
-    // One generation back, kept rather than deleted: the run worth reading is usually the one that just
-    // went wrong, and relaunching to look at the log is what would otherwise destroy it.
-    if (const u64 size = fs::file_size(file, error); !error && size > MAX_LOG_BYTES) {
+    if (which == LogFile::PerProcess) {
+        prunePerProcessLogs(directory);
+    } else if (const u64 size = fs::file_size(file, error); !error && size > MAX_LOG_BYTES) {
+        // One generation back, kept rather than deleted: the run worth reading is
+        // usually the one that just went wrong, and relaunching to look at the log is
+        // what would otherwise destroy it.
         fs::rename(file, directory / (APP_NAME_VIEW % ".log.1"sv).str(), error);
     }
 
@@ -196,6 +245,7 @@ void logging::openFile(const LogFile which, const path& directory) {
         println(cerr, "could not open the log file at {}", file.string());
         pending.clear();
         pending.shrink_to_fit();
+        logFull = true;
         return;
     }
 
@@ -203,7 +253,7 @@ void logging::openFile(const LogFile which, const path& directory) {
     logBytes = error ? 0 : carried;
 
     const auto started = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    println(logFile, "\n=== {} {} started {:%d-%m-%Y %H:%M:%S} ===", APP_NAME, itos(processId()).view(), started);
+    println(logFile, "\n=== {} {} started {:%d-%m-%Y %H:%M:%S} UTC ===", APP_NAME, itos(processId()).view(), started);
 
     for (const string& line : pending) {
         logBytes += line.size() + 1;
@@ -241,7 +291,11 @@ void logging::write(const LogLevel level, const std::source_location& where, con
 
     // openFile() has not run yet, and may never
     if (!logFile.is_open()) {
-        pending.push_back(line);
+        if (pendingBytes + line.size() + 1 <= MAX_LOG_BYTES) {
+            pendingBytes += line.size() + 1;
+            pending.push_back(line);
+        }
+
         return;
     }
 

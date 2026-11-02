@@ -1,11 +1,17 @@
 import { execFile } from "node:child_process";
 import console from "node:console";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 
+import { result, stage, track, transfer } from "./ui.ts";
+
 const execFileAsync = promisify(execFile);
+
+const elapsed = (since: number) => `${((Date.now() - since) / 1000).toFixed(1)}s`;
 
 export interface Release {
     url: string;
@@ -44,7 +50,7 @@ export async function run(file: string, args: string[], { env, okCodes = [0] }: 
 }
 
 function headersFor(url: string): Record<string, string> {
-    const headers: Record<string, string> = { "User-Agent": "install-dev-tools" };
+    const headers: Record<string, string> = { "User-Agent": "install-tools" };
     const token = process.env.GITHUB_TOKEN;
     if (token && /^https:\/\/(api\.)?github\.com\//.test(url)) {
         headers.Authorization = `Bearer ${token}`;
@@ -68,17 +74,31 @@ export async function getText(url: string): Promise<string> {
     return (await get(url)).text();
 }
 
-/** Downloads `url` to `dest`. Returns the final URL after redirects. */
 export async function download(url: string, dest: string): Promise<string> {
-    const response = await get(url);
-    await pipeline(Readable.fromWeb(response.body!), createWriteStream(dest));
+    stage("download");
+    const response = await get(url),
+        body = Readable.fromWeb(response.body!),
+        received = transfer(Number(response.headers.get("content-length")) || 0);
+    body.on("data", (chunk: Uint8Array) => received(chunk.length));
+    await pipeline(body, createWriteStream(dest));
     return response.url;
 }
 
-/** First redirect target of `url` (versioned for aka.ms / GitHub "latest" links), or `url` itself if it doesn't redirect. */
 export async function redirectTarget(url: string): Promise<string> {
     const response = await fetch(url, { headers: headersFor(url), method: "HEAD", redirect: "manual" });
     return response.headers.get("location") ?? url;
+}
+
+let ghEnabled = false;
+
+export async function enableGh(): Promise<void> {
+    ghEnabled = true;
+    if (!process.env.GITHUB_TOKEN) {
+        const token = (await run("gh", ["auth", "token"], { okCodes: [0, 1] }).catch(() => "")).trim();
+        if (token) {
+            process.env.GITHUB_TOKEN = token;
+        }
+    }
 }
 
 interface GithubRelease {
@@ -86,19 +106,40 @@ interface GithubRelease {
     assets: { browser_download_url: string; name: string; updated_at: string }[];
 }
 
-/**
- * Latest GitHub release asset matching `assetPattern`. With a fixed `tag` (rolling releases),
- * the version is the asset's update time since the tag never changes.
- */
+async function githubApi<T>(endpoint: string): Promise<T> {
+    if (ghEnabled) {
+        try {
+            return JSON.parse(await run("gh", ["api", endpoint])) as T;
+        } catch {
+            // gh missing from PATH or API error: fall back to the plain request below.
+        }
+    }
+    return getJson<T>(`https://api.github.com/${endpoint}`);
+}
+
 export async function githubRelease(repo: string, assetPattern: RegExp, tag?: string): Promise<Release> {
-    const release = await getJson<GithubRelease>(
-        `https://api.github.com/repos/${repo}/releases/${tag ? `tags/${tag}` : "latest"}`,
-    );
+    const release = await githubApi<GithubRelease>(`repos/${repo}/releases/${tag ? `tags/${tag}` : "latest"}`);
     const asset = release.assets.find((a) => assetPattern.test(a.name));
     if (!asset) {
         throw new Error(`${repo}: no release asset matches ${assetPattern}`);
     }
     return { url: asset.browser_download_url, version: tag ? asset.updated_at : release.tag_name };
+}
+
+export async function githubReleaseMatching(
+    repo: string,
+    tagPattern: RegExp,
+    assetName: (tag: string) => string,
+): Promise<Release> {
+    const releases = await githubApi<GithubRelease[]>(`repos/${repo}/releases?per_page=100`),
+        release = releases
+            .filter((r) => tagPattern.test(r.tag_name))
+            .sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
+    const asset = release?.assets.find((a) => a.name === assetName(release.tag_name));
+    if (!release || !asset) {
+        throw new Error(`${repo}: no release matches ${tagPattern} with the expected asset`);
+    }
+    return { url: asset.browser_download_url, version: release.tag_name };
 }
 
 export function compareVersions(a: string, b: string): number {
@@ -115,7 +156,6 @@ export function compareVersions(a: string, b: string): number {
 
 export type Zig = Record<string, Record<string, { tarball: string } | string>>;
 
-/** Latest stable Zig release for `target` (e.g. "x86_64-windows"). */
 export async function zigRelease(target: string): Promise<Release> {
     const index = await getJson<Zig>("https://ziglang.org/download/index.json");
     const version = Object.keys(index)
@@ -167,16 +207,30 @@ export class Report {
 
     /** Runs a named step, recording its outcome. Never throws. */
     async step(name: string, fn: () => Outcome | Promise<Outcome | void> | void): Promise<void> {
-        console.log(`[start] ${name}`);
+        const started = Date.now();
         try {
-            const current = (await fn()) === "current";
+            const current = (await track(name, async () => fn())) === "current";
             (current ? this.current : this.installed).push(name);
-            console.log(`[${current ? "up to date" : "done"}] ${name}`);
+            result(current ? "current" : "done", name, current ? "" : `(${elapsed(started)})`);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.failed.push([name, message]);
-            console.error(`[error] ${name}: ${message}`);
+            result("failed", name, message);
         }
+    }
+}
+
+const GIT_CONFIG: [string, string][] = [
+    ["user.name", "savannstm"],
+    ["user.email", "savannstm@gmail.com"],
+    // Commit LF only (CRLF is converted on commit), never rewrite line endings on checkout.
+    ["core.autocrlf", "input"],
+    ["core.eol", "lf"],
+];
+
+export async function configureGit(git: string): Promise<void> {
+    for (const [key, value] of GIT_CONFIG) {
+        await run(git, ["config", "--global", key, value]);
     }
 }
 
@@ -196,29 +250,61 @@ const CARGO_CRATES = [
     "cargo-sort",
     "cargo-sort-derives",
     "cargo-about",
+    "cargo-fuzz",
+    "cargo-semver-checks",
+    "neocmakelsp",
+    "sccache",
+    "cargo-nextest",
+    "cargo-deny",
+    "cargo-expand",
+    "bacon",
+    "cargo-llvm-cov",
+    "cargo-hack",
+    "cargo-cache",
+    "typos-cli",
+    "taplo-cli",
+    "hyperfine",
 ];
 
-/** cargo-binstall is idempotent: it installs missing crates and moves outdated ones to the latest version. */
-export async function cargoTools(report: Report): Promise<void> {
-    for (const crate of CARGO_CRATES) {
-        await report.step(`cargo:${crate}`, async () => {
-            await run("cargo", ["binstall", "-y", crate]);
-        });
-    }
+export async function cargoTools(report: Report, binstallArgs: string[] = []): Promise<void> {
+    await report.step("cargo tools", async () => {
+        await run("cargo", ["binstall", "-y", ...binstallArgs, ...CARGO_CRATES]);
+    });
 }
 
 export async function uvTools(report: Report, env: Record<string, string> = {}): Promise<void> {
     await report.step("uv:python", async () => {
-        await run("uv", ["python", "install"], { env });
+        await run("uv", ["python", "install", "3.14"], { env });
     });
-    await report.step("uv:meson", async () => {
-        await run("uv", ["tool", "install", "meson"], { env });
+    await report.step("uv:litellm", async () => {
+        await run("uv", ["tool", "install", "litellm"], { env });
         await run("uv", ["tool", "upgrade", "--all"], { env });
     });
 }
 
-/** Installs (or updates) the given rustup toolchains with the usual components; nightly stays the default. */
-export async function installRustToolchains(toolchains: string[]): Promise<void> {
+export async function installRustToolchains(toolchains: string[], nightly = "nightly"): Promise<void> {
+    const toolchainsDir = join(process.env["RUSTUP_HOME"] ?? join(homedir(), ".rustup"), "toolchains");
+    if (existsSync(toolchainsDir)) {
+        for (const toolchain of readdirSync(toolchainsDir)) {
+            const rustlib = join(toolchainsDir, toolchain, "lib", "rustlib");
+            for (const file of existsSync(rustlib) ? readdirSync(rustlib) : []) {
+                if (file.startsWith("manifest-rust-analyzer-preview-")) rmSync(join(rustlib, file));
+            }
+            // rustup's components list still names rust-analyzer-preview; with its manifest gone, `rustup update` fails reading it.
+            const components = join(rustlib, "components");
+            if (existsSync(components)) {
+                const text = readFileSync(components, "utf8");
+                if (text.includes("rust-analyzer-preview-")) {
+                    const kept = text.split("\n").filter((line) => !line.startsWith("rust-analyzer-preview-"));
+                    writeFileSync(components, kept.join("\n"));
+                    for (const exe of ["rust-analyzer", "rust-analyzer.exe"]) {
+                        rmSync(join(toolchainsDir, toolchain, "bin", exe), { force: true });
+                    }
+                }
+            }
+            rmSync(join(toolchainsDir, toolchain, "share", "doc", "rust-analyzer"), { recursive: true, force: true });
+        }
+    }
     await run("rustup", [
         "toolchain",
         "install",
@@ -228,5 +314,7 @@ export async function installRustToolchains(toolchains: string[]): Promise<void>
         "--allow-downgrade",
         ...["clippy", "rustfmt", "rust-src", "rust-analyzer"].flatMap((c) => ["-c", c]),
     ]);
-    await run("rustup", ["default", "nightly"]);
+    await run("rustup", ["default", nightly]);
+    await run("rustup", ["component", "add", "miri", "--toolchain", nightly]);
+    await run("rustup", ["target", "add", "armv8r-none-eabihf", "--toolchain", nightly]);
 }

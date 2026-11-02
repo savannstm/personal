@@ -1,8 +1,5 @@
 #pragma once
 
-// Requires: "Aliases.hpp", and in Logger.cpp: "Numbers.hpp", "StringBuilder.hpp", compile definitions
-// APP_NAME (string literal, e.g. "yuri") and optionally APP_SOURCE_ROOT (string literal, stripped from file names).
-
 #include "Aliases.hpp"
 
 #include <source_location>
@@ -33,6 +30,7 @@ template <typename... Args>
 struct LogFormat final {
     template <typename T>
         requires std::constructible_from<std::format_string<Args...>, T>
+    // NOLINTNEXTLINE(misc-explicit-constructor)
     consteval LogFormat(const T& text, const std::source_location& where = std::source_location::current()) :
         where(where),
         text(text) {}

@@ -1,11 +1,14 @@
-import consola from "consola";
-import $ from "dax";
+import { execFileSync } from "node:child_process";
+import console from "node:console";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 
-type Toolchain = "clang-ucrt" | "clang" | "msvc";
+import { CLANG64_BIN, composePath, LLVM_ROOT, toolDirs, type Toolchain } from "../personal/install-tools/toolchain.ts";
+
+// Every C/C++ tool is off the user PATH and the machine environment: this script sets up the whole toolchain.
+const CMAKE_ENV = { CMAKE_C_COMPILER: "clang", CMAKE_CXX_COMPILER: "clang++", CMAKE_GENERATOR: "Ninja" };
 
 function parseCliArgs(): Toolchain {
     const { values } = parseArgs({
@@ -13,8 +16,8 @@ function parseCliArgs(): Toolchain {
     });
 
     const t = values.toolchain;
-    if (t !== "msvc" && t !== "clang" && t !== "clang-ucrt") {
-        consola.error("Usage: set-env.ts --toolchain <msvc|clang|clang-ucrt>");
+    if (t !== "msvc" && t !== "clang") {
+        console.error("Usage: set-env.ts --toolchain <msvc|clang>");
         process.exit(1);
     }
     return t;
@@ -39,41 +42,60 @@ function latestByVersion(dirs: string[]): string | undefined {
         .at(-1);
 }
 
-async function getRegistryValue(key: string, name: string): Promise<string | undefined> {
-    const result = await $`reg query ${key} /v ${name}`.quiet().noThrow();
-    if (result.code !== 0) {
-        return undefined;
+function subdirs(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+}
+
+function getRegistryValue(key: string, name: string): string | undefined {
+    let output: string;
+    try {
+        output = execFileSync("reg", ["query", key, "/v", name], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            windowsHide: true,
+        });
+    } catch {
+        return undefined; // key or value missing
     }
 
-    const match = new RegExp(`${name}\\s+REG_\\w+\\s+(.*)`).exec(result.stdout);
-    return match?.[1]?.trim();
+    return new RegExp(`${name}\\s+REG_\\w+\\s+(.*)`).exec(output)?.[1]?.trim();
 }
 
-function quote(v: string): string {
-    return `"${v.replace(/"/g, '\\"')}"`;
-}
+// Single quotes: PowerShell expands `$` and backticks inside double quotes.
+const quote = (v: string) => `'${v.replaceAll("'", "''")}'`,
+    setVar = (name: string, value: string) => `$env:${name}=${quote(value)};`,
+    cmakeVars = () => Object.entries(CMAKE_ENV).map(([name, value]) => setVar(name, value));
 
-async function buildMsvcCommand(): Promise<string> {
+function buildMsvcCommand(): string {
     const vswhere = `${process.env["ProgramFiles(x86)"]}\\Microsoft Visual Studio\\Installer\\vswhere.exe`;
 
     if (!existsSync(vswhere)) {
         throw new Error(`vswhere.exe not found at '${vswhere}'.`);
     }
 
-    const vsInstallPath = (
-        await $`${vswhere} -latest -prerelease -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`.text()
+    // No - prerelease: install - tools maintains the stable Build Tools, and the newest preview may lack the components.
+    const vsInstallPath = execFileSync(
+        vswhere,
+        [
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ],
+        { encoding: "utf8", windowsHide: true },
     ).trim();
 
     if (!vsInstallPath) {
         throw new Error("No Visual Studio installation with the VC++ toolset was found.");
     }
 
-    const msvcRoot = join(vsInstallPath, "VC", "Tools", "MSVC");
-    const msvcVersion = latestByVersion(
-        readdirSync(msvcRoot, { withFileTypes: true })
-            .filter((d) => d.isDirectory())
-            .map((d) => d.name),
-    );
+    const msvcRoot = join(vsInstallPath, "VC", "Tools", "MSVC"),
+        msvcVersion = latestByVersion(subdirs(msvcRoot));
 
     if (!msvcVersion) {
         throw new Error(`No MSVC toolset versions found under '${msvcRoot}'.`);
@@ -81,109 +103,81 @@ async function buildMsvcCommand(): Promise<string> {
 
     const msvcPath = join(msvcRoot, msvcVersion);
 
-    let sdkRoot = await getRegistryValue(
-        "HKLM\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows Kits\\Installed Roots",
-        "KitsRoot10",
-    );
-
-    sdkRoot ??= await getRegistryValue("HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", "KitsRoot10");
+    const sdkRoot =
+        getRegistryValue("HKLM\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows Kits\\Installed Roots", "KitsRoot10") ??
+        getRegistryValue("HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", "KitsRoot10");
 
     if (!sdkRoot) {
         throw new Error("Could not locate Windows SDK.");
     }
 
-    const sdkIncludeRoot = join(sdkRoot, "Include");
-
-    const sdkVer = latestByVersion(
-        readdirSync(sdkIncludeRoot, { withFileTypes: true })
-            .filter((d) => d.isDirectory() && /^\d+\.\d+\.\d+\.\d+$/.test(d.name))
-            .map((d) => d.name),
-    );
+    const sdkVer = latestByVersion(subdirs(join(sdkRoot, "Include")).filter((d) => /^\d+\.\d+\.\d+\.\d+$/.test(d)));
 
     if (!sdkVer) {
         throw new Error("No Windows SDK version found.");
     }
 
-    const includeDirs = [
-        join(msvcPath, "include"),
-        join(sdkRoot, "Include", sdkVer, "ucrt"),
-        join(sdkRoot, "Include", sdkVer, "shared"),
-        join(sdkRoot, "Include", sdkVer, "um"),
-        join(sdkRoot, "Include", sdkVer, "winrt"),
-        join(sdkRoot, "Include", sdkVer, "cppwinrt"),
-    ];
+    // The ATL / MFC component is installed by install - tools too.
+    const present = (dir: string) => existsSync(dir),
+        includeDirs = [
+            join(msvcPath, "include"),
+            join(msvcPath, "atlmfc", "include"),
+            join(sdkRoot, "Include", sdkVer, "ucrt"),
+            join(sdkRoot, "Include", sdkVer, "shared"),
+            join(sdkRoot, "Include", sdkVer, "um"),
+            join(sdkRoot, "Include", sdkVer, "winrt"),
+            join(sdkRoot, "Include", sdkVer, "cppwinrt"),
+        ].filter(present),
+        libDirs = [
+            join(msvcPath, "lib", "x64"),
+            join(msvcPath, "atlmfc", "lib", "x64"),
+            join(sdkRoot, "Lib", sdkVer, "ucrt", "x64"),
+            join(sdkRoot, "Lib", sdkVer, "um", "x64"),
+        ].filter(present);
 
-    const libDirs = [
-        join(msvcPath, "lib", "x64"),
-        join(sdkRoot, "Lib", sdkVer, "ucrt", "x64"),
-        join(sdkRoot, "Lib", sdkVer, "um", "x64"),
-    ];
+    // LLVM comes from install - tools: C: \PATH\llvm.Its real bin dir goes on PATH, because clang finds its resource dir
+    // relative to the path it was launched from.
+    const clangRoot = join(LLVM_ROOT, "lib", "clang");
 
-    // LLVM comes from install-dev-tools: C:\PATH\llvm. Its real bin dir goes on PATH rather than the C:\PATH\bin
-    // symlinks, because clang finds its resource dir relative to the path it was launched from.
-    const llvmRoot = "C:\\PATH\\llvm",
-        clangVersion = latestByVersion(
-            readdirSync(join(llvmRoot, "lib", "clang"), { withFileTypes: true })
-                .filter((d) => d.isDirectory())
-                .map((d) => d.name),
-        );
+    if (!existsSync(clangRoot)) {
+        throw new Error(`LLVM not found under '${LLVM_ROOT}': run install-tools with --toolchain=msvc.`);
+    }
+
+    const clangVersion = latestByVersion(subdirs(clangRoot));
 
     if (!clangVersion) {
-        throw new Error(`No clang resource directory found under '${llvmRoot}'.`);
+        throw new Error(`No clang resource directory found under '${LLVM_ROOT}'.`);
     }
 
     const binDirs = [
-        join(llvmRoot, "bin"),
-        join(llvmRoot, "lib", "clang", clangVersion, "lib", "windows"),
+        join(LLVM_ROOT, "bin"),
+        join(clangRoot, clangVersion, "lib", "windows"),
         join(msvcPath, "bin", "Hostx64", "x64"),
         join(sdkRoot, "bin", sdkVer, "x64"),
+        ...toolDirs("msvc"),
     ];
 
-    const newPath = [...binDirs, process.env.PATH ?? ""].join(";");
-
     return [
+        setVar("INCLUDE", includeDirs.join(";")),
+        setVar("LIB", libDirs.join(";")),
+        setVar("PATH", composePath(binDirs, process.env.PATH ?? "")),
+        ...cmakeVars(),
         "rustup default nightly",
-        `$env:INCLUDE=${quote(includeDirs.join(";"))}`,
-        `$env:LIB=${quote(libDirs.join(";"))}`,
-        `$env:PATH=${quote(newPath)}`,
     ].join("\n");
 }
 
 function buildClangCommand(): string {
     return [
+        setVar("PATH", composePath([CLANG64_BIN, ...toolDirs("clang")], process.env.PATH ?? "")),
+        ...cmakeVars(),
         "rustup default nightly-gnullvm",
-        `$env:PATH=${quote(`C:\\msys64\\clang64\\bin;${process.env.PATH ?? ""}`)}`,
     ].join("\n");
 }
 
-function buildClangUcrtCommand(): string {
-    return [
-        "rustup default nightly-gnullvm",
-        `$env:PATH=${quote(`C:\\msys64\\ucrt64\\bin;${process.env.PATH ?? ""}`)}`,
-    ].join("\n");
-}
-
-async function main() {
+try {
     const toolchain = parseCliArgs();
-
-    let command: string;
-
-    switch (toolchain) {
-        case "clang":
-            command = buildClangCommand();
-            break;
-        case "clang-ucrt":
-            command = buildClangUcrtCommand();
-            break;
-        case "msvc":
-            command = await buildMsvcCommand();
-            break;
-    }
-
-    console.log(command);
-}
-
-await main().catch((err: unknown) => {
-    consola.error(err);
+    console.log(toolchain === "clang" ? buildClangCommand() : buildMsvcCommand());
+} catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : err);
     process.exit(1);
-});
+}

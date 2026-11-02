@@ -8,9 +8,11 @@ import {
     DEBUG_NATIVE,
     DEBUG_TOOLCHAIN,
     ICU_DATA_FILTERS,
+    LLVM_MINGW_I686,
     REL_ROOT,
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
+    REPOS_ROOT,
     ROOT,
     WIN,
 } from "./config.ts";
@@ -162,7 +164,7 @@ export async function customBuild(
         ffmpeg: async () => {
             const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, NM, RANLIB, STRIP, WINDRES } = process.env,
                 { toolchain } = toolchainState(),
-                audioCodecs =
+                rapCodecs =
                     "--enable-decoder=aac,ac3,alac,dca,eac3,flac,mp3float,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,truehd,vorbis --enable-demuxer=aac,ac3,aiff,avi,caf,dts,eac3,flac,matroska,mov,mp3,ogg,truehd,wav --enable-parser=aac,ac3,dca,flac,mlp,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
                 common = `--target-os=${WIN ? (toolchain === "msvc" ? "win64" : "mingw32") : "linux"} --arch=x86_64 ${toolchain === "msvc" ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --nm=${NM} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
                 // Only the formats nearly everything is in; the demuxers are the same as RAP's, they cost next to nothing.
@@ -171,21 +173,18 @@ export async function customBuild(
                 rpgCodecs =
                     "--enable-demuxer=asf,avi,flac,matroska,mov,mp3,mpegps,ogg,wav --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,flac,h264,mjpeg,mp2float,mp3float,mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,pcm_s8,pcm_mulaw,pcm_alaw,pcm_dvd,theora,vc1,vorbis,vp8,vp9,wmav1,wmav2,wmv1,wmv2,wmv3 --enable-parser=h264,mpeg4video,mpegvideo,vc1";
 
-            let variants;
+            // vu: video only, audio is ignored, so no audio decoders, parsers or filters. Modern video (H.264, HEVC,
+            // VP8/VP9, AV1 through dav1d) plus MPEG-4 Part 2 and Theora, which AVI and OGV files still commonly hold.
+            const vuCodecs =
+                "--enable-libdav1d --enable-zlib --enable-decoder=libdav1d,h264,hevc,vp8,vp9,mpeg4,theora,gif,apng,webp,webp_anim --enable-demuxer=matroska,mov,avi,ogg,gif,apng,webp,webp_anim --enable-parser=av1,h264,hevc,vp8,vp9,mpeg4video,gif,png";
 
-            if (isDebug) {
+            const root = isDebug ? DBG_ROOT : REL_ROOT,
                 variants = [
-                    { codecs: audioCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-rap` },
-                    { codecs: trapCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-trap` },
-                    { codecs: rpgCodecs, isDebug, prefix: `${DBG_ROOT}/ffmpeg-rpgmtranslate` },
+                    { codecs: rapCodecs, isDebug, prefix: `${root}/ffmpeg-rap` },
+                    { codecs: trapCodecs, isDebug, prefix: `${root}/ffmpeg-trap` },
+                    { codecs: rpgCodecs, isDebug, prefix: `${root}/ffmpeg-rpgmtranslate` },
+                    { codecs: vuCodecs, isDebug, prefix: `${root}/ffmpeg-vu` },
                 ];
-            } else {
-                variants = [
-                    { codecs: audioCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-rap` },
-                    { codecs: trapCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-trap` },
-                    { codecs: rpgCodecs, isDebug, prefix: `${REL_ROOT}/ffmpeg-rpgmtranslate` },
-                ];
-            }
 
             for (const v of variants) {
                 await step(v.prefix.split("/").pop()!, async () => {
@@ -236,18 +235,19 @@ export async function customBuild(
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.c`} MagickCore/pocketfft.c`.cwd(p);
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.h`} MagickCore/pocketfft.h`.cwd(p);
 
-            for (const quantum of [8, 16]) {
-                for (const hdr of ["enable", "disable"]) {
-                    await step(`q${quantum}-${hdr}-hdri`, () =>
-                        buildAutoconf(
-                            p,
-                            isDebug,
-                            libRoot,
-                            `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${quantum} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
-                                "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
-                        ),
-                    );
-                }
+            for (const [quantum, hdr] of [
+                [8, "disable"],
+                [16, "enable"],
+            ]) {
+                await step(`q${quantum}-${hdr}-hdri`, () =>
+                    buildAutoconf(
+                        p,
+                        isDebug,
+                        libRoot,
+                        `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${quantum} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
+                            "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
+                    ),
+                );
             }
         },
         libraw: async () => {
@@ -305,7 +305,7 @@ export async function customBuild(
         qt5: async () => {
             const submodules = ["qtbase", "qtimageformats", "qttools", "qtsvg"],
                 common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${toolchainState().toolchain === "msvc" ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-opengl desktop -no-egl"}`,
-                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -no-feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
+                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-harmonydeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -no-feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
 
             await $`git submodule update --init --depth 1 ${submodules}`.cwd(p);
             await $`git submodule update --init --recursive --depth 1`.cwd(`${p}/qttools`);
@@ -333,6 +333,10 @@ export async function customBuild(
                 await $`cmake --install release`.cwd(p);
             }
         },
+        "ruby-1.8.1": () => buildRuby(p, isDebug, "ruby-1.8.1"),
+        "ruby-1.8.7": () => buildRuby(p, isDebug, "ruby-1.8.7"),
+        "ruby-1.9.3": () => buildRuby(p, isDebug, "ruby-1.9.3"),
+        "ruby-1.9.2": () => buildRuby(p, isDebug, "ruby-1.9.2"),
     };
 
     if (table[name]) {
@@ -340,11 +344,86 @@ export async function customBuild(
     }
 }
 
+/**
+ * Ruby 1.8/1.9 predate 64-bit Windows (their win32 port assumes a 32-bit `long` and MSVCRT internals), so they build
+ * with the manually installed llvm-mingw i686 toolchain instead of clang64. Release only.
+ */
+async function buildRuby(p: string, isDebug: boolean, name: string) {
+    if (isDebug) {
+        return;
+    }
+
+    const triple = "i686-w64-mingw32",
+        // Flags that target x86_64 or pull in the clang64 x86_64 runtime and libs; the i686 build must not get them.
+        x64Flag = /^(-march=|-mtune=|--target=|-fopenmp|-static-openmp|-l|-L)/,
+        keep = (flags: string) =>
+            flags
+                .split(" ")
+                .filter((flag) => !x64Flag.test(flag))
+                .join(" "),
+        // x86-64-v3's instruction set, spelled out since -march is rejected for i686 targets.
+        isa = "-mavx -mavx2 -mbmi -mbmi2 -mf16c -mfma -mlzcnt -mmovbe -mpopcnt -msse4.2 -mxsave",
+        // The shell splits PATH on `:`, so the drive letter has to be an MSYS path.
+        bin = toMsysPath(`${LLVM_MINGW_I686}/bin`),
+        // Ruby's C code relies on -fno-strict-aliasing; the -Wno-error flags turn clang 16+ hard errors on its old code back into warnings.
+        // 1.8's `inline` functions (lex.c) need gnu89 inline semantics to get an external definition. file.c includes
+        // fcntl.h (and so sys/stat.h) before config.h sets _FILE_OFFSET_BITS=64, giving it a smaller `struct stat` than
+        // win32.c's rb_w32_stat writes; defining it up front keeps the layout identical.
+        cflags = `${keep(process.env.CFLAGS!)} ${isa} ${name.startsWith("ruby-1.8") ? "-fgnu89-inline -D_FILE_OFFSET_BITS=64" : ""} -fno-strict-aliasing -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int`,
+        ldflags = `${keep(process.env.LDFLAGS!)} ${isa}`;
+
+    // Not buildAutoconf: its MSYS-style --prefix is resolved against the current drive by Ruby's native rbinstall, so the
+    // prefix has to stay a Windows path. `install` depends on the encoding .so files, which can't link against a static
+    // ruby.exe, so only the program and the Ruby libraries are installed.
+    // RUBYOPT is cleared: the host's value (e.g. `-E`) is rejected by the old miniruby while it builds rbconfig.rb.
+    const extraEnv = `RUBYOPT= PATH="${bin}:$PATH" CC=${triple}-clang CXX=${triple}-clang++ AR=${triple}-ar RANLIB=${triple}-ranlib STRIP=${triple}-strip MAKEFLAGS="LDSHARED=true WINDRES=${triple}-windres DLLWRAP=${toMsysPath(`${ROOT}/patches/ruby/dllwrap.sh`)}" CFLAGS="${cflags}" LDFLAGS="${ldflags}"`;
+
+    if (name === "ruby-1.8.1") {
+        // mingw's sys/time.h already defines `struct timezone` (guarded by _TIMEZONE_DEFINED); Ruby's win32.h redefines it.
+        await bash`cd ${toMsysPath(p)} && perl -0pi -e 's/#ifdef __MINGW32__\\nstruct timezone \\{/#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\\n#define _TIMEZONE_DEFINED\\nstruct timezone {/; s/gettimeofday\\(struct timeval \\*, struct timezone \\*\\)/gettimeofday(struct timeval *, void *)/' win32/win32.h && perl -pi -e 's/^gettimeofday\\(struct timeval \\*tv, struct timezone \\*tz\\)/gettimeofday(struct timeval *tv, void *tz)/' win32/win32.c`;
+    }
+
+    if (name === "ruby-1.8.7") {
+        // mingw's time.h defines CLOCK_MONOTONIC/CLOCK_REALTIME and calls `_clock_gettime32`, which msvcrt doesn't export.
+        await bash`cd ${toMsysPath(p)} && perl -pi -e 's/^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$/#if defined($1) \\&\\& !defined(__MINGW32__)/' eval.c`;
+    }
+
+    if (name === "ruby-1.9.2") {
+        // MinGW's msvcrt headers have no `struct _stati64`; Ruby's win32.h only maps it by a function-like macro, which
+        // leaves the struct tag unresolved. Map it to `_stat64` (MinGW's struct) and keep the wrapper on `_stat64`.
+        await bash`cd ${toMsysPath(p)} && sed -i 's/^#define _stati64(path, st) rb_w32_stati64(path, st)$/#define _stati64 _stat64\\n#define _stat64(path, st) rb_w32_stati64(path, st)/' include/ruby/win32.h`;
+    }
+
+    await bash`cd ${toMsysPath(p)} && ${extraEnv} ./configure --host=${triple} --disable-install-doc --disable-rubygems --with-out-ext='*' --disable-shared --enable-static ${name.startsWith("ruby-1.8") ? "ac_cv_func_clock_gettime=no" : ""} --prefix=${REL_ROOT}/${name}`;
+    if (name === "ruby-1.8.1") {
+        // Its GNUmakefile hardcodes `dllwrap --target=... --driver-name=...`, which resolves to llvm-mingw's dlltool shim.
+        await bash`cd ${toMsysPath(p)} && sed -i 's/dllwrap --target=mingw32 --driver-name=[$][(]CC[)]/$(DLLWRAP)/' GNUmakefile`;
+    }
+
+    // Extensions can't be built as .so for a static ruby.exe, so zlib (the only one the research harness needs) is
+    // compiled into the program: its Init_zlib is registered by an Init_ext that replaces dmyext.o in the archive.
+    // llvm-mingw ships no i686 libz, so build one from the zlib sources.
+    const zlibDir = `${REPOS_ROOT}/zlib-i686`,
+        zlibObjs =
+            "adler32 compress crc32 deflate gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil",
+        legacy = name.startsWith("ruby-1.8"),
+        initZlib = legacy ? 'Init_zlib(); rb_provide("zlib.so");' : 'ruby_init_ext("zlib.so", Init_zlib);',
+        initProto = legacy ? "" : "void ruby_init_ext(const char *name, void (*init)(void));";
+    await bash`mkdir -p ${toMsysPath(zlibDir)} && cd ${toMsysPath(zlibDir)} && if [ ! -f libz.a ]; then export PATH="${bin}:$PATH" && curl -sL -o zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz && tar xf zlib.tar.gz --strip-components=1 && for f in ${zlibObjs}; do ${triple}-clang -O2 -c $f.c -o $f.o || exit 1; done && ${triple}-ar rcs libz.a *.o; fi`;
+
+    const zlibCflags = `-I${toMsysPath(zlibDir)} -Wno-error=incompatible-pointer-types`;
+    await bash`cd ${toMsysPath(p)} && export ${extraEnv} && LIBA=$(printf 'print:\n\t@echo $(LIBRUBY_A)\n' | make -s -f Makefile -f - print) && make miniruby.exe $LIBA && printf '#include "ruby.h"
+void Init_zlib(void);
+${initProto}
+void Init_ext(void) { ${initZlib} }
+' > extinit.c && $CC $CFLAGS ${zlibCflags} -I. -I./include -I./.ext/include/i386-mingw32 -c ext/zlib/zlib.c -o zlib_ext.o && $CC $CFLAGS -I. -I./include -I./.ext/include/i386-mingw32 -c extinit.c -o extinit.o && $AR d $LIBA dmyext.o && $AR rs $LIBA extinit.o zlib_ext.o && make EXTLDFLAGS="-L${toMsysPath(zlibDir)} -lz" ruby.exe rubyw.exe && cp $LIBA \${LIBA%-static.a}.a && make ${name === "ruby-1.8.1" ? "install" : "install-bin install-lib"}`;
+}
+
 export function arghook(name: string, isDebug: boolean) {
     const table: Record<string, string> = {
         brotli: `-DBROTLI_EMSCRIPTEN=OFF -DBROTLI_BUILD_TOOLS=OFF`,
         dav1d: "-Denable_asm=true -Denable_tools=false -Denable_examples=false -Denable_tests=false -Denable_seek_stress=false -Denable_docs=false -Dlogging=false -Dtestdata_tests=false -Dfuzzing_engine=none -Dtrim_dsp=true",
-        fltk: `-DFLTK_BUILD_SHARED_LIBS=OFF -DFLTK_USE_SYSTEM_ZLIB=ON -DFLTK_USE_SYSTEM_LIBPNG=ON -DFLTK_USE_SYSTEM_LIBJPEG=ON -DFLTK_OPTION_SVG=OFF -DFLTK_BUILD_FLUID=OFF -DFLTK_BUILD_FLTK_OPTIONS=OFF -DFLTK_BUILD_GL=ON -DFLTK_BUILD_FORMS=OFF -DFLTK_BUILD_TEST=OFF -DFLTK_BUILD_HTML_DOCS=OFF -DFLTK_OPTION_PEN_SUPPORT=OFF -DFLTK_OPTION_LARGE_FILE=OFF -DFLTK_OPTION_PRINT_SUPPORT=OFF -DFLTK_OPTION_FILESYSTEM_SUPPORT=OFF -DFLTK_OPTION_STD=OFF -DFLTK_GRAPHICS_GDIPLUS=OFF -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
+        fltk: `-DFLTK_BUILD_SHARED_LIBS=OFF -DFLTK_USE_SYSTEM_ZLIB=ON -DFLTK_USE_SYSTEM_LIBPNG=ON -DFLTK_USE_SYSTEM_LIBJPEG=ON -DFLTK_OPTION_SVG=OFF -DFLTK_BUILD_FLUID=OFF -DFLTK_BUILD_FLTK_OPTIONS=OFF -DFLTK_BUILD_GL=ON -DFLTK_BUILD_FORMS=OFF -DFLTK_BUILD_TEST=OFF -DFLTK_BUILD_HTML_DOCS=OFF -DFLTK_OPTION_PEN_SUPPORT=OFF -DFLTK_OPTION_LARGE_FILE=OFF -DFLTK_OPTION_PRINT_SUPPORT=OFF -DFLTK_OPTION_FILESYSTEM_SUPPORT=ON -DFLTK_OPTION_STD=ON -DFLTK_GRAPHICS_GDIPLUS=ON -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
         freetype: `-DFT_DISABLE_ZLIB=OFF -DFT_REQUIRE_ZLIB=ON -DFT_DISABLE_BZIP2=OFF -DFT_REQUIRE_BZIP2=ON -DFT_DISABLE_PNG=OFF -DFT_REQUIRE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DYNAMIC_HARFBUZZ=OFF -DFT_REQUIRE_HARFBUZZ=OFF -DFT_DISABLE_BROTLI=ON -DFT_REQUIRE_BROTLI=OFF -DDISABLE_FORCE_DEBUG_POSTFIX=ON`,
         glaze: "-Dglaze_ENABLE_FUZZING=OFF -Dglaze_DEVELOPER_MODE=OFF",
         glfw: `-DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DGLFW_INSTALL=ON -DGLFW_LIBRARY_TYPE=${isDebug ? "SHARED" : "STATIC"}`,
@@ -442,7 +521,7 @@ export async function posthook(name: string, path: string, isDebug: boolean) {
                     await movePdbs(`${path}/Magick++/lib/.libs`, `${root}/bin`);
                 }
 
-                for (const variant of ["Q8", "Q8HDRI", "Q16", "Q16HDRI"]) {
+                for (const variant of ["Q8", "Q16HDRI"]) {
                     for (const lib of ["Magick++", "MagickCore", "MagickWand"]) {
                         await copyLib(root, `${lib}-7.${variant}.dll.lib`, `${lib}-7.${variant}.lib`);
                     }
@@ -456,7 +535,7 @@ export async function posthook(name: string, path: string, isDebug: boolean) {
             }
         },
         kvazaar: async () => {
-            if (WIN && !isDebug && msvc) {
+            if (WIN && !isDebug) {
                 await stripDllImport(`${root}/include/kvazaar.h`);
             }
         },
@@ -588,11 +667,9 @@ export async function posthook(name: string, path: string, isDebug: boolean) {
 export async function prehook(name: string, path: string) {
     const table: Record<string, () => Promise<void>> = {
         bzip2: async () => {
-            if (toolchainState().toolchain === "msvc") {
-                await $`sd "DESCRIPTION.+" "" libbz2.def`.cwd(path);
-                // LIBRARY sets the DLL name recorded in the import lib; upstream's LIBBZ2 makes consumers load LIBBZ2.dll.
-                await $`sd "LIBRARY.+" "LIBRARY bz2" libbz2.def`.cwd(path);
-            }
+            await $`sd "DESCRIPTION.+" "" libbz2.def`.cwd(path);
+            // LIBRARY sets the DLL name recorded in the import lib; upstream's LIBBZ2 makes consumers load LIBBZ2.dll.
+            await $`sd "LIBRARY.+" "LIBRARY bz2" libbz2.def`.cwd(path);
         },
         "double-conversion": async () => {
             await $`sd -s "if(BUILD_SHARED_LIBS AND MSVC)" "if(BUILD_SHARED_LIBS AND (MSVC OR (CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")))" CMakeLists.txt`.cwd(
@@ -672,12 +749,13 @@ export async function prehook(name: string, path: string) {
             }
         },
         kvazaar: async () => {
-            if (toolchainState().toolchain === "msvc") {
-                await $`git apply ${`${ROOT}/patches/kvazaar-cmakelists.patch`}`.cwd(path);
+            if (WIN) {
+                if (toolchainState().toolchain === "msvc") {
+                    await $`git apply ${`${ROOT}/patches/kvazaar-cmakelists.patch`}`.cwd(path);
+                } else if (toolchainState().toolchain === "clang") {
+                    await $`sd -s -- "-Wa,-muse-unaligned-vector-move" "" CMakeLists.txt`.cwd(path);
+                }
             }
-        },
-        libarchive: async () => {
-            await $`cp ${`${ROOT}/patches/libarchive/CMakeLists.txt`} libarchive/CMakeLists.txt`.cwd(path);
         },
         libgit2: async () => {
             await $`sd -s -- "include(DefaultCFlags)" "" CMakeLists.txt`.cwd(path);
@@ -785,6 +863,14 @@ export async function prehook(name: string, path: string) {
         openexr: async () => {
             await $`sd -s -- "add_subdirectory(website/src)" "" CMakeLists.txt`.cwd(path);
         },
+        nuspell: async () => {
+            // Static ICU (release) must be consumed with U_STATIC_IMPLEMENTATION, otherwise ICU's U_EXPORT/U_IMPORT
+            // expand to __declspec(dllexport)/dllimport. Shared (debug) ICU keeps the default.
+            await appendFile(
+                `${path}/src/nuspell/CMakeLists.txt`,
+                "\nif(NOT BUILD_SHARED_LIBS)\ntarget_compile_definitions(nuspell PUBLIC U_STATIC_IMPLEMENTATION)\nendif()\n",
+            );
+        },
         pcre2: async () => {
             await $`git submodule update --depth 1 --init sljit`.cwd(`${path}/deps`);
         },
@@ -823,7 +909,7 @@ async function buildAutoconf(
     extraEnv = "",
     configureCommand = "./configure",
 ) {
-    const libtool = !path.includes("ffmpeg") && !path.includes("icu"),
+    const libtool = !path.includes("ffmpeg") && !path.includes("icu") && !path.includes("ruby"),
         msysPath = toMsysPath(path),
         { toolchain } = toolchainState();
     const configurePath = `${path}/configure`;
@@ -833,7 +919,7 @@ async function buildAutoconf(
         libs = "-ladvapi32 -luser32";
 
         if (toolchain !== "msvc") {
-            libs += `-lclang_rt.builtins-x86_64 ${process.env.CFLAGS!.includes("-fsanitize=address") ? "-lclang_rt.asan_dynamic-x86_64 -lclang_rt.asan_dynamic_runtime_thunk-x86_64" : ""} -lole32 -lcfgmgr32`;
+            libs += ` -lclang_rt.builtins-x86_64 ${process.env.CFLAGS!.includes("-fsanitize=address") ? "-lclang_rt.asan_dynamic-x86_64 -lclang_rt.asan_dynamic_runtime_thunk-x86_64" : ""} -lole32 -lcfgmgr32`;
         }
     }
 
@@ -850,7 +936,8 @@ async function buildAutoconf(
         }
     }
 
-    const libsArg = !path.includes("ffmpeg") ? `LIBS="${libs}"` : "";
+    // Ruby's configure sets its own LIBS for mingw, and ours would pull in the clang64 x86_64 clang_rt builtins.
+    const libsArg = !path.includes("ffmpeg") && !path.includes("ruby") ? `LIBS="${libs}"` : "";
 
     // Archive-sourced libraries (e.g. libraw) build in-tree and are never `git clean`ed between variants, so make
     // would reuse the other variant's objects (debug's -DLIBRAW_BUILDLIB ones in a "static" release build).
@@ -987,7 +1074,12 @@ export async function buildMeson(name: string, path: string, isDebug: boolean) {
 }
 
 export async function buildRust(name: string, path: string, isDebug: boolean) {
-    await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(isDebug ? "--profile win-debug" : "--profile win-release")} --no-default-features ${raw(arghook(name, isDebug))} --prefix=${isDebug ? DBG_ROOT : REL_ROOT}`.cwd(
+    const { toolchain } = toolchainState(),
+        profile = `${WIN ? (toolchain === "msvc" ? "win-msvc" : "win-clang") : "linux"}-${isDebug ? "debug" : "release"}`,
+        target = WIN
+            ? ` --target ${toolchain === "msvc" ? "x86_64-pc-windows-msvc" : "x86_64-pc-windows-gnullvm"}`
+            : "";
+    await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(`--profile ${profile}${target}`)} --no-default-features ${raw(arghook(name, isDebug))} --prefix=${isDebug ? DBG_ROOT : REL_ROOT}`.cwd(
         path,
     );
 }

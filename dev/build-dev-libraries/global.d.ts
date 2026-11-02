@@ -9,6 +9,7 @@ interface CliOptions {
     toolchain: Toolchain;
     useCodeview: boolean;
     prefix: null | string;
+    reposRoot: string;
 }
 
 interface ToolchainProfile {
@@ -28,7 +29,7 @@ interface BuildState {
     prefixes: Record<string, { entries: Record<string, BuildEntry>; toolchain: string }>;
 }
 
-type Toolchain = "clang-ucrt" | "clang" | "msvc";
+type Toolchain = "clang" | "msvc";
 
 interface Tools {
     addr2line: string;

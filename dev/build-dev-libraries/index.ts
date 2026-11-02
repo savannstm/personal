@@ -2,12 +2,19 @@ import { Command } from "commander";
 import consola from "consola";
 import { $ } from "dax";
 import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { exit } from "node:process";
 import pc from "picocolors";
 
+import {
+    composePath,
+    MSYS2_BASE_PACKAGES,
+    MSYS2_MINGW_PACKAGES,
+    toolDirs,
+} from "../../personal/install-tools/toolchain.ts";
 import { buildRepos } from "./build-runner.ts";
 import { checkLibraryUpdates } from "./check-updates.ts";
-import { LLVM_ROOT, setPrefix, WIN } from "./config.ts";
+import { LLVM_ROOT, MSYS2_ROOT, REPOS_ROOT, setPrefix, WIN } from "./config.ts";
 import { LIBRARIES } from "./libraries.ts";
 import { bash } from "./shell.ts";
 import { configureToolchain, isToolchain, TOOLCHAINS } from "./toolchain.ts";
@@ -15,28 +22,13 @@ import { configureToolchain, isToolchain, TOOLCHAINS } from "./toolchain.ts";
 const HOST_ARCH = "Hostx64",
     TARGET_ARCH = "x64";
 
-export const WINDOWS_ONLY_TOOLCHAINS: ReadonlySet<Toolchain> = new Set(["clang-ucrt", "msvc"]);
+export const WINDOWS_ONLY_TOOLCHAINS: ReadonlySet<Toolchain> = new Set(["msvc"]);
 
-const REQUIRED_UTILITIES = ["cmake", "git", "meson", "ninja", "sd"] as const;
+const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "sd"] as const;
 const UNIX_UTILITIES = ["autoconf", "automake", "bison", "file", "flex", "unzip", "make", "pkg-config"] as const;
 
-// python: ICU's configure generates data/rules.mk with it; without it rules.mk is empty and the data build fails.
-const BASE_PACKAGES = ["bison", "flex", "file", "autoconf", "automake", "make", "pkgconf", "python"];
-// Kept identical to MSYS2_MINGW_PACKAGES in install-dev-tools/windows.ts.
-const MINGW_PACKAGES = [
-    "toolchain",
-    "clang",
-    "lld",
-    "llvm",
-    "lldb",
-    "llvm-openmp",
-    "clang-tools-extra",
-    "libunwind",
-    "cmake",
-    "ninja",
-    "meson",
-    "nasm",
-];
+const BASE_PACKAGES = MSYS2_BASE_PACKAGES,
+    MINGW_PACKAGES = MSYS2_MINGW_PACKAGES;
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
@@ -85,14 +77,7 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
         case "clang": {
             const msysDir = "clang64",
                 msystem = "CLANG64";
-            process.env.PATH = `C:/msys64/${msysDir}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
-            process.env.MSYSTEM = msystem;
-            break;
-        }
-        case "clang-ucrt": {
-            const msysDir = "ucrt64",
-                msystem = "UCRT64";
-            process.env.PATH = `C:/msys64/${msysDir}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
+            process.env.PATH = `${MSYS2_ROOT}/${msysDir}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
             process.env.MSYSTEM = msystem;
             break;
         }
@@ -118,7 +103,16 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
                 msvcBin = `${msvcRoot}/bin/${HOST_ARCH}/${TARGET_ARCH}`,
                 sdkBin = `${sdkBase}/bin/${sdkVersion}/${TARGET_ARCH}`;
 
-            process.env.PATH = `${LLVM_ROOT}/bin;${LLVM_ROOT}/lib/clang/${clangVersion}/lib/windows;${msvcBin};${sdkBin};${process.env.PATH}`;
+            process.env.PATH = composePath(
+                [
+                    `${LLVM_ROOT}/bin`,
+                    `${LLVM_ROOT}/lib/clang/${clangVersion}/lib/windows`,
+                    msvcBin,
+                    sdkBin,
+                    ...toolDirs("msvc"),
+                ],
+                process.env.PATH ?? "",
+            );
 
             process.env.INCLUDE = [
                 `${msvcRoot}/include`,
@@ -161,7 +155,9 @@ export async function verifyPrerequisites(toolchain: Toolchain): Promise<void> {
         throw new Error(
             `The following required utilities were not found on PATH:\n${list}\n\n` +
                 (WIN
-                    ? "On Windows, ensure MSYS2 is installed and the appropriate toolchain packages are installed via pacman."
+                    ? toolchain === "msvc"
+                        ? "On Windows, the msvc toolchain needs the personal/install-tools archives (LLVM in C:\\PATH\\llvm, cmake, ninja, ...)."
+                        : "On Windows, ensure MSYS2 is installed and the appropriate toolchain packages are installed via pacman."
                     : "Install the missing utilities using your system package manager."),
         );
     }
@@ -177,8 +173,7 @@ export async function installToolchainPackages(toolchain: Toolchain) {
         return;
     }
 
-    const prefix = toolchain === "clang-ucrt" ? "mingw-w64-ucrt-x86_64-" : "mingw-w64-clang-x86_64-",
-        packages = [...BASE_PACKAGES, ...MINGW_PACKAGES.map((p) => `${prefix}${p}`)].join(" ");
+    const packages = [...BASE_PACKAGES, ...MINGW_PACKAGES.map((p) => `mingw-w64-clang-x86_64-${p}`)].join(" ");
     await bash`pacman -Syuq --needed --noconfirm ${packages} >/dev/null 2>&1`;
 }
 
@@ -207,8 +202,9 @@ export function parseCliArgs(): CliOptions {
         .option("--only <names>", "Only build these libraries (comma-separated)")
         .option("--exclude, --skip <names>", "Exclude these libraries (comma-separated)")
         .option("--force", "Rebuild even if the repository is already built at the pinned tag", false)
-        .option("--toolchain <clang|clang-ucrt|msvc>", "Select toolchain for building", "clang")
+        .option("--toolchain <clang|msvc>", "Select toolchain for building", "clang")
         .option("--prefix <path>", "Install prefix for builds (overrides the default)")
+        .option("--repos <path>", "Directory to clone library repositories into", REPOS_ROOT)
         .option("--only-debug", "Only build the debug (shared) variant of each library")
         .option("--only-release", "Only build the release (static) variant of each library")
         .option("--gen-toolchains", "Generate toolchain files in ./toolchains with default settings and exit")
@@ -233,6 +229,7 @@ export function parseCliArgs(): CliOptions {
             onlyDebug,
             onlyRelease,
             prefix: prefix,
+            reposRoot: resolve(opts.repos as string).replaceAll("\\", "/"),
             toolchain: toolchain as Toolchain,
             useCodeview,
         };
@@ -249,6 +246,8 @@ export function parseCliArgs(): CliOptions {
 
     if (prefix) {
         setPrefix(prefix);
+    } else if (WIN && toolchain === "clang") {
+        setPrefix("C:/dev-clang");
     }
 
     return options;

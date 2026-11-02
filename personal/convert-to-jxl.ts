@@ -110,9 +110,7 @@ async function processFile(
         }
 
         case "png": {
-            const result = await $`cjxl ${srcFile} ${jxlAlready} -d ${DISTANCE} -e ${EFFORT} --quiet`
-                .quiet()
-                .noThrow();
+            const result = await $`cjxl ${srcFile} ${jxlAlready} -d ${DISTANCE} -e ${EFFORT} --quiet`.quiet().noThrow();
             if (result.code === 0) {
                 consola.log(`OK   (png, d=${DISTANCE} e=${EFFORT}): ${relPath}`);
             } else {

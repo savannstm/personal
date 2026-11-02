@@ -1,8 +1,5 @@
 #pragma once
 
-// Requires: "Aliases.hpp", "Logger.hpp" (in Dialog.cpp), tinyfiledialogs, FLTK (fallback dialogs when tinyfd has no
-// graphical backend, and Fl_Native_File_Chooser for file pickers), compile definition APP_NAME.
-
 #include "Aliases.hpp"
 
 #include <source_location>

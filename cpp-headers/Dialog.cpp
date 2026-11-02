@@ -35,13 +35,16 @@ auto requote(const string_view message) -> string {
     return out;
 }
 
-// Passing "tinyfd_query" as a dialog's title makes tinyfd report the backend it would use, without
-// opening anything, as its own return value: every tinyfd_*Dialog/tinyfd_messageBox/tinyfd_notifyPopup
-// returns a truthy (non-NULL / non-zero) sentinel for a real GUI backend (native, applescript, zenity,
-// kdialog, tkinter, ...) and a falsy one for the "dialog"/"whiptail"/"basicinput"/"no_solution" console
-// fallbacks (see tinyfiledialogs.h) - e.g. a Linux session with none of zenity/kdialog/tkinter installed.
-// Each check below is cached in a function-local static since the desktop's backend can't change
-// mid-run and probing it on unix shells out to detect each candidate binary.
+// Passing "tinyfd_query" as a dialog's title makes tinyfd report the backend it
+// would use, without opening anything, as its own return value: every
+// tinyfd_*Dialog/tinyfd_messageBox/tinyfd_notifyPopup returns a truthy
+// (non-NULL / non-zero) sentinel for a real GUI backend (native, applescript,
+// zenity, kdialog, tkinter, ...) and a falsy one for the
+// "dialog"/"whiptail"/"basicinput"/"no_solution" console fallbacks (see
+// tinyfiledialogs.h) - e.g. a Linux session with none of zenity/kdialog/tkinter
+// installed. Each check below is cached in a function-local static since the
+// desktop's backend can't change mid-run and probing it on unix shells out to
+// detect each candidate binary.
 auto tinyfdMessageBoxIsGraphical() -> bool {
     static const bool graphical = tinyfd_messageBox("tinyfd_query", "", "ok", "info", 1) != 0;
     return graphical;
@@ -88,7 +91,7 @@ auto nativeFilterString(const string_view allLabel, const span<const FilterGroup
 
     string result;
     result += allLabel;
-    result += "	*.{";
+    result += "\t*.{";
 
     bool first = true;
 
@@ -108,7 +111,7 @@ auto nativeFilterString(const string_view allLabel, const span<const FilterGroup
             result += chr == '\t' || chr == '\n' ? ' ' : chr;
         }
 
-        result += "	*.{";
+        result += "\t*.{";
         first = true;
 
         for (const string_view glob : group.globs) {
@@ -163,7 +166,15 @@ auto showChoice(
     logging::write(LogLevel::Warning, where, message);
 
     if (tinyfdMessageBoxIsGraphical()) {
-        switch (tinyfd_messageBox(APP_NAME, requote(message).c_str(), "yesnocancel", "question", 1)) {
+        // tinyfd's buttons are fixed to Yes/No/Cancel, so the message says what
+        // each one does
+        string text = requote(message);
+        text += "\n\nYes: ";
+        text += requote(primary);
+        text += "\nNo: ";
+        text += requote(secondary);
+
+        switch (tinyfd_messageBox(APP_NAME, text.c_str(), "yesnocancel", "question", 1)) {
             case 1:
                 return Choice::Primary;
             case 2:
@@ -207,24 +218,24 @@ auto pickColor(const string_view title, u8& red, u8& green, u8& blue) -> bool {
         return true;
     }
 
-    f64 redD = f64(red) / UINT8_MAX;
-    f64 greenD = f64(green) / UINT8_MAX;
-    f64 blueD = f64(blue) / UINT8_MAX;
+    f64 redD = static_cast<f64>(red) / UINT8_MAX;
+    f64 greenD = static_cast<f64>(green) / UINT8_MAX;
+    f64 blueD = static_cast<f64>(blue) / UINT8_MAX;
 
     if (fl_color_chooser(string(title).c_str(), redD, greenD, blueD) == 0) {
         return false;
     }
 
-    red = u8(redD * UINT8_MAX);
-    green = u8(greenD * UINT8_MAX);
-    blue = u8(blueD * UINT8_MAX);
+    red = static_cast<u8>(redD * UINT8_MAX);
+    green = static_cast<u8>(greenD * UINT8_MAX);
+    blue = static_cast<u8>(blueD * UINT8_MAX);
     return true;
 }
 
 auto promptInput(const string_view title, const string_view message, const string_view defaultText)
     -> optional<string> {
     if (tinyfdInputBoxIsGraphical()) {
-        char* const result =
+        const char* const result =
             tinyfd_inputBox(requote(title).c_str(), requote(message).c_str(), requote(defaultText).c_str());
         return result == nullptr ? nullopt : optional(string(result));
     }
@@ -235,8 +246,9 @@ auto promptInput(const string_view title, const string_view message, const strin
 
 auto promptPassword(const string_view title, const string_view message) -> optional<string> {
     if (tinyfdInputBoxIsGraphical()) {
-        // NULL default (as opposed to "") is what puts tinyfd_inputBox into password-masked mode
-        char* const result = tinyfd_inputBox(requote(title).c_str(), requote(message).c_str(), nullptr);
+        // NULL default (as opposed to "") is what puts tinyfd_inputBox into
+        // password-masked mode
+        const char* const result = tinyfd_inputBox(requote(title).c_str(), requote(message).c_str(), nullptr);
         return result == nullptr ? nullopt : optional(string(result));
     }
 
@@ -269,7 +281,7 @@ auto pickOpenFile(
     }
 
     vector<string> files;
-    files.reserve(scast<usize>(chooser.count()));
+    files.reserve(static_cast<usize>(chooser.count()));
 
     for (i32 index = 0; index < chooser.count(); index++) {
         files.emplace_back(chooser.filename(index));

@@ -3,10 +3,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
     buildRoot,
     DBG_ROOT,
+    DEBUG_FFMPEG_ROOT,
     DEBUG_NATIVE,
     DEBUG_TOOLCHAIN,
     INJECT_TARGETS,
     REL_ROOT,
+    RELEASE_FFMPEG_ROOT,
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
     SEP,
@@ -19,6 +21,19 @@ const C_STD = "17",
     CLANG_WIN_TARGET = "x86_64-w64-windows-gnu",
     CXX_STD = "23",
     MSVC_TARGET = "x86_64-pc-windows-msvc";
+
+// CMake PROJECT_NAME -> [cache variable, FFmpeg variant prefix built by hooks.ts `ffmpeg`].
+const FFMPEG_VARIANTS: [string, [string, string][]][] = [
+    [
+        "rap",
+        [
+            ["RAP_FFMPEG_ROOT", "ffmpeg-rap"],
+            ["TRAP_FFMPEG_ROOT", "ffmpeg-trap"],
+        ],
+    ],
+    ["rpgmtranslate", [["FFMPEG_ROOT", "ffmpeg-rpgmtranslate"]]],
+    ["vu", [["FFMPEG_ROOT", "ffmpeg-vu"]]],
+];
 
 const TOOL_VARS: [string, keyof Tools][] = [
     ["CMAKE_C_COMPILER", "cc"],
@@ -48,7 +63,7 @@ const INI_BINARIES: [string, keyof Tools][] = [
     ["nm", "nm"],
 ];
 
-export const TOOLCHAINS: readonly Toolchain[] = ["clang", "clang-ucrt", "msvc"];
+export const TOOLCHAINS: readonly Toolchain[] = ["clang", "msvc"];
 
 export function isToolchain(value: string): value is Toolchain {
     return (TOOLCHAINS as readonly string[]).includes(value);
@@ -205,6 +220,9 @@ async function genToolchains(
         writeFile(RELEASE_NATIVE, toIni(release, tools)),
         writeFile(DEBUG_TOOLCHAIN, toCmakeToolchain(debug, tools)),
         writeFile(RELEASE_TOOLCHAIN, toCmakeToolchain(release, tools)),
+        ...(WIN
+            ? [writeFile(DEBUG_FFMPEG_ROOT, toFfmpegRoot(debug)), writeFile(RELEASE_FFMPEG_ROOT, toFfmpegRoot(release))]
+            : []),
     ]);
 
     return {
@@ -267,6 +285,18 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
         ldflags.push("-fsanitize=address");
     }
 
+    if (options.genToolchains) {
+        cflags.push(
+            "-Wall",
+            "-Wpedantic",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            "-fsanitize-address-use-after-return=runtime",
+            "-fsanitize-annotate-debug-info=address",
+        );
+        ldflags.push("-fsanitize=address,undefined");
+    }
+
     if (!WIN) {
         cflags.push("-fstack-clash-protection", "-fdebug-types-section", "-D_FORTIFY_SOURCE=2");
     }
@@ -295,6 +325,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
         "-Qn",
+        "-Brepro",
     ];
 
     const cflags = [...shared.cflags, ...commonOptFlags],
@@ -311,6 +342,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       "-Wl,-EMITTOOLVERSIONINFO:NO",
                       "-Wl,-NOCOFFGRPINFO",
                       "-Wl,-EMITPOGOPHASEINFO",
+                      "-Wl,-OPT:LLDLTO=3",
                   ]
                 : [
                       "-Wl,-O3",
@@ -320,6 +352,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       "-Wl,--strip-all",
                       "-Wl,--build-id=none",
                       "-Wl,--icf=all",
+                      "-Wl,--no-insert-timestamp",
                   ];
 
     if (!profile.rtti) {
@@ -381,10 +414,6 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile): Shared {
             ldflags.push("-Wl,-IGNORE:LONGSECTIONS");
         }
 
-        if (toolchain === "clang-ucrt") {
-            ldflags.push("-lstdc++exp");
-        }
-
         cflags.push("-D_WIN32_WINNT=0x0A00", "-DWINVER=0x0A00");
     } else {
         cflags.push("-fPIC");
@@ -424,7 +453,6 @@ function quoteArr(spaceDelimited: string): string {
 function resolveWinTarget(toolchain: Toolchain): null | string {
     switch (toolchain) {
         case "clang":
-        case "clang-ucrt":
             return CLANG_WIN_TARGET;
         case "msvc":
             return MSVC_TARGET;
@@ -483,22 +511,44 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
 
     lines.push(`set(CMAKE_INSTALL_PREFIX ${cq(b.prefix)} CACHE PATH "" FORCE)`);
     lines.push(`set(ICU_ROOT ${cq(b.prefix)} CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_UC_LIBRARY "${cq(b.prefix).slice(1, -1)}/lib/cicuuc.lib" CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_UC_LIBRARY_DEBUG "${cq(b.prefix).slice(1, -1)}/lib/cicuuc.lib" CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_UC_LIBRARY_RELEASE "${cq(b.prefix).slice(1, -1)}/lib/cicuuc.lib" CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_DATA_LIBRARY "${cq(b.prefix).slice(1, -1)}/lib/cicudt.lib" CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_DATA_LIBRARY_DEBUG "${cq(b.prefix).slice(1, -1)}/lib/cicudt.lib" CACHE STRING "" FORCE)`);
-    lines.push(`set(ICU_DATA_LIBRARY_RELEASE "${cq(b.prefix).slice(1, -1)}/lib/cicudt.lib" CACHE STRING "" FORCE)`);
+    lines.push(
+        `set(RUST_PROFILE "${WIN ? (b.toolchain === "msvc" ? "win-msvc" : "win-clang") : "linux"}-${b.buildType}" CACHE STRING "")`,
+    );
+    const icuLibDir = `${cq(b.prefix).slice(1, -1)}/lib`;
+    const icuLib = (stem: string) =>
+        b.toolchain === "msvc"
+            ? `${icuLibDir}/c${stem}.lib`
+            : b.buildType === "debug"
+              ? `${icuLibDir}/lib${stem}.dll.a`
+              : `${icuLibDir}/lib${stem}.a`;
+    lines.push(`set(ICU_UC_LIBRARY "${icuLib("icuuc")}" CACHE STRING "" FORCE)`);
+    lines.push(`set(ICU_UC_LIBRARY_DEBUG "${icuLib("icuuc")}" CACHE STRING "" FORCE)`);
+    lines.push(`set(ICU_UC_LIBRARY_RELEASE "${icuLib("icuuc")}" CACHE STRING "" FORCE)`);
+    lines.push(`set(ICU_DATA_LIBRARY "${icuLib("icudt")}" CACHE STRING "" FORCE)`);
+    lines.push(`set(ICU_DATA_LIBRARY_DEBUG "${icuLib("icudt")}" CACHE STRING "" FORCE)`);
+    lines.push(`set(ICU_DATA_LIBRARY_RELEASE "${icuLib("icudt")}" CACHE STRING "" FORCE)`);
 
+    // Runs after project() in each top-level project, so it can see PROJECT_NAME (the toolchain file cannot).
     if (WIN) {
+        const topLevelIncludes = [`\${CMAKE_CURRENT_LIST_DIR}/ffmpeg-root-${b.buildType}.cmake`];
         if (b.buildType === "release") {
-            lines.push(
-                `set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "\${CMAKE_CURRENT_LIST_DIR}/inject-targets.cmake" CACHE FILEPATH "" FORCE)`,
-            );
+            topLevelIncludes.unshift("${CMAKE_CURRENT_LIST_DIR}/inject-targets.cmake");
         }
+        lines.push(`set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${topLevelIncludes.join(";")}" CACHE FILEPATH "" FORCE)`);
     }
 
     return `${lines.join("\n")}\n`;
+}
+
+// Not FORCE: a -D<var>=... given on the command line (already cached) wins.
+function toFfmpegRoot(b: BuildConfig): string {
+    const branches = FFMPEG_VARIANTS.map(([project, vars], i) => {
+        const sets = vars.map(
+            ([name, variant]) => `    set(${name} "${b.prefix}/${variant}" CACHE PATH "FFmpeg install prefix")`,
+        );
+        return `${i === 0 ? "if" : "elseif"} (PROJECT_NAME STREQUAL "${project}")\n${sets.join("\n")}`;
+    });
+    return `${branches.join("\n")}\nendif()\n`;
 }
 
 function toIni(b: BuildConfig, tools: Tools): string {

@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 export const WIN = process.platform === "win32";
 export const SEP = delimiter;
 export const ROOT = dirname(fileURLToPath(import.meta.url));
-export const LLVM_ROOT = "C:/PATH/llvm"; // installed by install-dev-tools
+export const LLVM_ROOT = "C:/PATH/llvm"; // installed by personal/install-tools
+export const LLVM_MINGW_I686 = "C:/PATH/llvm-mingw-msvcrt-i686"; // manual install of mstorsjo/llvm-mingw msvcrt-i686, Ruby builds only
+export const MSYS2_ROOT = "C:/msys64";
 export const REPOS_ROOT =`${ROOT}/Repos`;
 export const BUILD_STATE_FILE = `${ROOT}/build-state.json`;
 export const TOOLCHAINS_DIR = `${ROOT}/toolchains`;
@@ -14,6 +16,8 @@ export const RELEASE_TOOLCHAIN = `${TOOLCHAINS_DIR}/release.cmake`;
 export const DEBUG_NATIVE = `${TOOLCHAINS_DIR}/native-debug.ini`;
 export const RELEASE_NATIVE = `${TOOLCHAINS_DIR}/native-release.ini`;
 export const INJECT_TARGETS = `${TOOLCHAINS_DIR}/inject-targets.cmake`;
+export const DEBUG_FFMPEG_ROOT = `${TOOLCHAINS_DIR}/ffmpeg-root-debug.cmake`;
+export const RELEASE_FFMPEG_ROOT = `${TOOLCHAINS_DIR}/ffmpeg-root-release.cmake`;
 export let DBG_ROOT = WIN ? "C:/dev/debug" : "/usr/local/debug";
 export let REL_ROOT = WIN ? "C:/dev/release" : "/usr/local/release";
 export const ICU_DATA_FILTERS = await readFile(`${ROOT}/patches/filters.json`, "utf8");
