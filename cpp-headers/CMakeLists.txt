@@ -39,15 +39,19 @@ target_include_directories(cpp_headers_check PRIVATE
 target_compile_definitions(cpp_headers_check PRIVATE APP_NAME=\"cpp-headers\")
 
 # Opt-in tests: -DCPP_HEADERS_BUILD_TESTS=ON (ENCHANTUM_DIR is the directory holding enchantum_single_header.hpp;
-# point CMAKE_PREFIX_PATH at Qt). Dialog.cpp is not covered: it opens modal windows through FLTK/tinyfiledialogs.
+# point CMAKE_PREFIX_PATH at Qt, FLTK_DIR at the directory holding FLTKConfig.cmake). Only Dialog.cpp's pure helpers are
+# tested (Tests.cpp includes it); the dialogs themselves are modal windows.
 option(CPP_HEADERS_BUILD_TESTS "Build the header tests" OFF)
 
 if(CPP_HEADERS_BUILD_TESTS)
     set(ENCHANTUM_DIR "F:/Repos/enchantum/single_include/enchantum" CACHE PATH "")
+    enable_language(C)
     find_package(Qt6 REQUIRED COMPONENTS Core)
+    find_package(FLTK CONFIG REQUIRED)
     enable_testing()
 
-    add_executable(cpp_headers_tests tests/Tests.cpp Filesystem.cpp Logger.cpp QtStrings.cpp "${ZMIJ_DIR}/zmij.cc")
+    add_executable(cpp_headers_tests tests/Tests.cpp Filesystem.cpp Logger.cpp QtStrings.cpp "${ZMIJ_DIR}/zmij.cc"
+        "${TINYFILEDIALOGS_DIR}/tinyfiledialogs.c")
     if(EXISTS "${ZMIJ_DIR}/zmij-int.cc")
         target_sources(cpp_headers_tests PRIVATE "${ZMIJ_DIR}/zmij-int.cc")
     endif()
@@ -55,11 +59,12 @@ if(CPP_HEADERS_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${ZMIJ_DIR}"
         "${FAST_FLOAT_DIR}"
+        "${TINYFILEDIALOGS_DIR}"
         "${ENCHANTUM_DIR}")
     target_compile_definitions(cpp_headers_tests PRIVATE
         APP_NAME=\"cpp-headers-tests\"
         QT_NO_CAST_FROM_ASCII
         QT_NO_CAST_TO_ASCII)
-    target_link_libraries(cpp_headers_tests PRIVATE Qt6::Core)
+    target_link_libraries(cpp_headers_tests PRIVATE Qt6::Core fltk::fltk)
     add_test(NAME cpp_headers_tests COMMAND cpp_headers_tests)
 endif()

@@ -1,6 +1,8 @@
 // Tests for the headers in this directory. Opt-in: configure with -DCPP_HEADERS_BUILD_TESTS=ON.
 // No framework: each CHECK reports its failure and the exit code is 1 if any failed.
 
+// Dialog.cpp is included so its anonymous-namespace helpers can be tested.
+#include "Dialog.cpp"
 #include "Filesystem.hpp"
 #include "Hasher.hpp"
 #include "Logger.hpp"
@@ -342,6 +344,26 @@ void testLogger() {
 
     fs::remove_all(dir);
 }
+
+void testDialog() {
+    CHECK(requote(R"(say "hi" it's `x`)") == "say ”hi” it’s ’x’");
+    CHECK(requote("plain") == "plain");
+    CHECK(requote("").empty());
+
+    CHECK(nativeFilterString("All", {}).empty());
+
+    const vector<FilterGroup> one{ { .globs = { "*.png", "*.jpg" }, .label = "Images" } };
+    CHECK(nativeFilterString("All", one) == "All\t*.{png,jpg}\nImages\t*.{png,jpg}");
+
+    const vector<FilterGroup> two{
+        { .globs = { "*.png", "*.jpg" }, .label = "Images" },
+        { .globs = { "*.txt" }, .label = "Te\txt\n" },
+    };
+    CHECK(nativeFilterString("All", two) == "All\t*.{png,jpg,txt}\nImages\t*.{png,jpg}\nTe xt \t*.{txt}");
+
+    const vector<FilterGroup> bare{ { .globs = { "README" }, .label = "Docs" } };
+    CHECK(nativeFilterString("All", bare) == "All\t*.{README}\nDocs\t*.{README}");  // no "*." prefix to strip
+}
 }  // namespace
 
 auto main() -> int {
@@ -354,6 +376,7 @@ auto main() -> int {
     testQtAliases();
     testQtStrings();
     testLogger();
+    testDialog();
 
     if (failures == 0) {
         std::puts("all tests passed");
