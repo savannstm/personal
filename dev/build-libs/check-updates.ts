@@ -28,7 +28,7 @@ const MIRRORS = [
         "https://ftp.halifax.rwth-aachen.de/archlinux",
     ],
     MIRROR_REPOS = ["core", "extra"],
-    HEADERS = { "User-Agent": "build-dev-libraries-check-updates" },
+    HEADERS = { "User-Agent": "build-libs-check-updates" },
     SYNC_BUCKET_SECONDS = 3600;
 
 /**

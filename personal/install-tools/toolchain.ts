@@ -10,7 +10,6 @@ export const ROOT = "C:\\PATH",
     LLVM_ROOT = join(ROOT, "llvm"),
     // MSYS2, Steam and the MSVC/.NET pieces keep their default locations; the rest installs under ROOT.
     MSYS2 = "C:\\msys64",
-    NODE_DIR = join(ROOT, "node"),
     // Windows PowerShell 5.1 ships with every Windows install: the only PowerShell these scripts run themselves.
     POWERSHELL = join(
         process.env.SystemRoot ?? "C:\\Windows",

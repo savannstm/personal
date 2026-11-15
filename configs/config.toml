@@ -123,6 +123,7 @@ rustflags = [
     "-Clink-arg=-Wl,--build-id=none",
     "-Clink-arg=-Wl,--icf=all",
     "-Clink-arg=-Wl,--no-insert-timestamp",
+    "-Clink-arg=-static",
     "-Lnative=C:/dev-clang/release/lib",
 ]
 

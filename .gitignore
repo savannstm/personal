@@ -8,12 +8,12 @@
 .agents
 .gemini
 .codex
-.claude
+/.claude
 .cursor
 .codegraph
 
 node_modules
 
-dev/build-dev-libraries/Repos
-dev/build-dev-libraries/build-state.json
-dev/build-dev-libraries/toolchains
+dev/build-libs/Repos
+dev/build-libs/build-state.json
+dev/build-libs/toolchains

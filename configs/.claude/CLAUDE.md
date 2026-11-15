@@ -21,7 +21,9 @@ Guidelines:
 
 - No random `ls`, `git status`, `git diff` and any other commands to check stuff that you don't need to check.
 - Prefer surgical searches with rg or fd.
-- No manually finding what you might need: no probing of `C:/Program Files`, `/usr/bin` - if something isn't on PATH, stop and report.
+- No manually finding what you might need: no probing of `C:/Program Files`, `C:/Users` (Windows) or `/opt`, `/home` (Linux) - if something isn't on PATH, stop and report.
+- Tools missing from PATH: the model can and should search `C:/PATH`, `/usr/bin` for them before reporting them missing.
+- Never read notes, docs or memory files from the working tree or git history to recover prior decisions. Deleted files (`D` in `git status`, even if uncommitted) were removed on purpose: do not read them, and do not treat them as current guidance. Work from the current code and the task at hand.
 
 # Surgical Changes
 
@@ -101,7 +103,7 @@ Architecture:
 
 ## Sanity checks
 
-For complex C/C++ libraries (Qt, FLTK - especially FLTK), read the actual source instead of guessing in C:/Repos-dev.
+For complex C/C++ libraries (Qt, FLTK - especially FLTK), read the actual source instead of guessing in C:/Repos-dev (Windows only).
 
 # Build and Verification
 
@@ -111,21 +113,8 @@ For complex C/C++ libraries (Qt, FLTK - especially FLTK), read the actual source
 
 # Environment
 
-- On my machine, on Windows the build environment (PATH, INCLUDE/LIB, rustup toolchain, ...) is dynamic, not in the shell profile. Fetch it with `node F:/Repos/things/dev/set-env.ts --toolchain=<msvc|clang>`; it prints ready-to-paste commands that set the toolchain and variables for the session.
-    - In a fresh shell, run it and apply its output before any LLVM/Clang tool or MSVC-toolchain C++ build.
+- The build environment (PATH, INCLUDE/LIB, rustup toolchain, ...) is dynamic, not in the shell profile. On Windows, fetch it with `node F:/Repos/things/dev/set-env.ts --toolchain=<msvc|clang>`; it prints ready-to-paste commands that set the toolchain and variables for the session.
+    - On Windows, in a fresh shell, run it and apply its output before any LLVM/Clang tool or MSVC-toolchain C++ build.
     - Clang is always the GNU-style frontend (clang/clang++).
-
-# CLI tools
-
-rg instead of grep, sd instead of sed, fd instead of find. All are on PATH; call them directly, don't probe or fall back.
-
-<!-- CODEGRAPH_START -->
-# CodeGraph
-
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
-
-- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
-
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->
+- There are no self-built or cloned repos on Linux, so `Repos/msys64` and `set-env.ts` are irrelevant. Build and test with the system packages only.
+- rg instead of grep, sd instead of sed, fd instead of find. All are on PATH.

@@ -69,12 +69,14 @@ export function isToolchain(value: string): value is Toolchain {
     return (TOOLCHAINS as readonly string[]).includes(value);
 }
 
-let current: Conf | null = null;
+let current: Conf | null = null,
+    cxxStd = CXX_STD;
 
 export async function configureToolchain(
     options: CliOptions,
     profile: ToolchainProfile = { asan: false, debugOpt: true, fastmath: true, rtti: false },
 ): Promise<Conf> {
+    cxxStd = profile.cxxStd ?? CXX_STD;
     current = await genToolchains(options, profile);
     return current;
 }
@@ -98,7 +100,7 @@ export async function computeFlags(isDebug: boolean) {
     }
 
     const cFlags = ["-std=gnu17", opt].join(" "),
-        cxxFlags = ["-std=gnu++23", opt].join(" "),
+        cxxFlags = [`-std=gnu++${cxxStd}`, opt].join(" "),
         includeFlags = (
             await bash`shopt -s nullglob; PKG_CONFIG_PATH="${pkgconfPaths}" pkg-config --cflags $(basename -s .pc ${`${root}/lib/pkgconfig/*.pc`}) 2>/dev/null | sd -s -- "-I" "-isystem "`
                 .noThrow()
@@ -317,6 +319,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     const commonOptFlags = [
         "-O3",
         "-flto=full",
+        "-ffat-lto-objects",
         "-fmerge-all-constants",
         "-ffunction-sections",
         "-fdata-sections",
@@ -473,7 +476,7 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     }
     lines.push(`set(CMAKE_GENERATOR Ninja CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_C_STANDARD "${C_STD}" CACHE STRING "" FORCE)`);
-    lines.push(`set(CMAKE_CXX_STANDARD "${CXX_STD}" CACHE STRING "" FORCE)`);
+    lines.push(`set(CMAKE_CXX_STANDARD "${cxxStd}" CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_C_EXTENSIONS ON CACHE BOOL "" FORCE)`);
     lines.push(`set(CMAKE_CXX_EXTENSIONS ON CACHE BOOL "" FORCE)`);
     lines.push(`set(CMAKE_BUILD_TYPE ${b.cmakeBuildType} CACHE STRING "" FORCE)`);
@@ -574,7 +577,7 @@ function toIni(b: BuildConfig, tools: Tools): string {
     }
     lines.push("[built-in options]");
     lines.push(`c_std = 'gnu${C_STD}'`);
-    lines.push(`cpp_std = 'gnu++${CXX_STD}'`);
+    lines.push(`cpp_std = 'gnu++${cxxStd}'`);
     lines.push(`default_library = '${b.defaultLibrary}'`);
     lines.push(`buildtype = '${b.buildType}'`);
     lines.push(`prefix = '${b.prefix}'`);

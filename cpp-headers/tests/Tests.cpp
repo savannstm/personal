@@ -183,8 +183,10 @@ void testStringBuilder() {
     CHECK(("ab" % string("cd")).size() == 4);
     CHECK(("x" % string("y")).str() == "xy");
 
-    const auto left = "a" % string("b");
-    const auto right = "c" % string("d");
+    const string bStr = "b";
+    const string dStr = "d";
+    const auto left = "a" % bStr;  // builders hold views, so the strings must outlive them
+    const auto right = "c" % dStr;
     CHECK(string(left % right) == "abcd");  // builder % builder
     CHECK(string(left % 'z') == "abz");
 

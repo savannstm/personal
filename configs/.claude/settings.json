@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "model": "haiku",
+  "skillOverrides": {
+    "anthropic-skills:morning": "off",
+    "anthropic-skills:pdf": "off",
+    "anthropic-skills:xlsx": "off",
+    "anthropic-skills:import-memory": "off",
+    "anthropic-skills:google-workspace": "off",
+    "anthropic-skills:deep-research": "off",
+    "anthropic-skills:computer-use": "off",
+    "anthropic-skills:chrome-browser": "off",
+    "anthropic-skills:docs": "off"
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true,
+    "skill-creator@anthropic-plugin-directory": true
+  },
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    }
+  },
+  "outputStyle": "Concise",
+  "modelSettings": {
+    "claude-haiku-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "medium"
+    }
+  },
+  "promptSuggestionEnabled": false,
+  "awaySummaryEnabled": true,
+  "pluginConfigs": {
+    "ponytail@ponytail": {
+      "options": {
+        "ledger": true,
+        "sendNames": true
+      }
+    }
+  },
+  "prefersReducedMotion": true,
+  "timeFormat": "24-hour",
+  "theme": "dark",
+  "autoCompactEnabled": false
+}

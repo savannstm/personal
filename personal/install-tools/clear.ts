@@ -31,6 +31,7 @@ const HOME = homedir(),
     VS_INSTALLER = join(PROGRAM_FILES_X86, "Microsoft Visual Studio", "Installer"),
     CARGO = join(HOME, ".cargo"),
     PNPM_HOME = join(LOCAL, "pnpm"),
+    FNM_DIR = join(LOCAL, "fnm"),
     CLAUDE_BIN = join(HOME, ".local", "bin", "claude.exe"),
     CLAUDE_DATA = join(HOME, ".local", "share", "claude");
 
@@ -129,7 +130,7 @@ export async function clearWindows(report: Report, yes: boolean) {
                 (path) => `Visual Studio Build Tools at ${path} (uninstaller), then the Visual Studio Installer`,
             ),
             ...(node ? ["Node.js (uninstaller, after this script exits)"] : []),
-            "Rust (rustup self uninstall; ~/.cargo/config.toml is kept), uv tools/Pythons/cache, pnpm, Claude Code",
+            "Rust (rustup self uninstall; ~/.cargo/config.toml is kept), uv tools/Pythons/cache, pnpm, fnm (with Node.js), Claude Code",
             `${ROOT} and its user PATH entries, Explorer menu entries, the Inconsolata Nerd Font, machine environment variables`,
             `${MSYS2} (everything but its home directory)`,
             "(Steam's games are inside its install directory and go with it.)",
@@ -193,7 +194,12 @@ export async function clearWindows(report: Report, yes: boolean) {
 
     await report.step("user settings & registry", async () => {
         const rootPrefix = `${ROOT.toLowerCase()}\\`,
-            userBins = [join(CARGO, "bin"), join(HOME, ".local", "bin"), PNPM_HOME].map((dir) => dir.toLowerCase());
+            userBins = [
+                join(CARGO, "bin"),
+                join(HOME, ".local", "bin"),
+                PNPM_HOME,
+                join(FNM_DIR, "aliases", "default"),
+            ].map((dir) => dir.toLowerCase());
         await dropFromUserPath((entry) => {
             const lower = entry.toLowerCase().replace(/\\+$/, "");
             return `${lower}\\`.startsWith(rootPrefix) || userBins.includes(lower);
@@ -221,6 +227,7 @@ export async function clearWindows(report: Report, yes: boolean) {
         }
 
         rmSync(PNPM_HOME, { force: true, recursive: true });
+        rmSync(FNM_DIR, { force: true, recursive: true });
         rmSync(CLAUDE_BIN, { force: true });
         rmSync(CLAUDE_DATA, { force: true, recursive: true });
     });

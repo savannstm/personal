@@ -14,7 +14,7 @@ import {
 } from "../../personal/install-tools/toolchain.ts";
 import { buildRepos } from "./build-runner.ts";
 import { checkLibraryUpdates } from "./check-updates.ts";
-import { LLVM_ROOT, MSYS2_ROOT, REPOS_ROOT, setPrefix, WIN } from "./config.ts";
+import { LLVM_ROOT, MSYS2_ROOT, REPOS_ROOT, setPgoMode, setPrefix, WIN } from "./config.ts";
 import { LIBRARIES } from "./libraries.ts";
 import { bash } from "./shell.ts";
 import { configureToolchain, isToolchain, TOOLCHAINS } from "./toolchain.ts";
@@ -207,6 +207,8 @@ export function parseCliArgs(): CliOptions {
         .option("--repos <path>", "Directory to clone library repositories into", REPOS_ROOT)
         .option("--only-debug", "Only build the debug (shared) variant of each library")
         .option("--only-release", "Only build the release (static) variant of each library")
+        .option("--only-pgo", "Only run the llvm-project PGO profile step, then stop")
+        .option("--skip-pgo", "Build llvm-project without PGO: no profile generation, no profile use")
         .option("--gen-toolchains", "Generate toolchain files in ./toolchains with default settings and exit")
         .option("--use-codeview", "Also generate CodeView PDB debug files on MSVC.")
         .option("--check-library-updates", "Compare pinned versions against Arch Linux packages and exit", false);
@@ -243,6 +245,12 @@ export function parseCliArgs(): CliOptions {
     if (useCodeview && toolchain !== "msvc") {
         throw new Error("--use-codeview is not allowed with non-MSVC toolchains.");
     }
+
+    if (opts.onlyPgo && opts.skipPgo) {
+        throw new Error("Options --only-pgo and --skip-pgo are mutually exclusive; use at most one.");
+    }
+
+    setPgoMode(opts.onlyPgo ? "only" : opts.skipPgo ? "skip" : "all");
 
     if (prefix) {
         setPrefix(prefix);

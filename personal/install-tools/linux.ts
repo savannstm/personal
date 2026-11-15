@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import process from "node:process";
 
 import {
     cargoTools,
     configureGit,
     download,
+    enableGh,
     getJson,
     githubRelease,
     installRustToolchains,
@@ -24,6 +25,7 @@ const PACKAGES: Record<Family, string[]> = {
     arch: [
         "base-devel",
         "curl",
+        "unzip",
         "ca-certificates",
         "git",
         "github-cli",
@@ -78,10 +80,20 @@ const PACKAGES: Record<Family, string[]> = {
         "libxkbcommon",
         "libxkbcommon-x11",
         "libxcb",
+        "libxext",
+        "libxi",
+        "libxrandr",
+        "libxrender",
+        "libxss",
+        "libxtst",
+        "libxxf86vm",
+        "xorg-server-xvfb",
+        "weston",
     ],
     debian: [
         "build-essential",
         "curl",
+        "unzip",
         "ca-certificates",
         "git",
         "gh",
@@ -106,13 +118,14 @@ const PACKAGES: Record<Family, string[]> = {
         "libjxl-dev",
         "libjxl-tools",
         "libwebp-dev",
-        "libwebp-tools",
         "webp",
         "libheif-dev",
         "libheif-examples",
         "libfltk1.4-dev",
         "libglfw3-dev",
         "libglaze-dev",
+        "libgtest-dev",
+        "libgmock-dev",
         "libgit2-dev",
         "libarchive-dev",
         "libmagickcore-dev",
@@ -162,6 +175,15 @@ const PACKAGES: Record<Family, string[]> = {
         "libxkbcommon-dev",
         "libxkbcommon-x11-dev",
         "libxcb-xkb-dev",
+        "libxext-dev",
+        "libxi-dev",
+        "libxrandr-dev",
+        "libxrender-dev",
+        "libxss-dev",
+        "libxtst-dev",
+        "libxxf86vm-dev",
+        "xvfb",
+        "weston",
         "clang-23",
         "clangd-23",
         "lld-23",
@@ -177,7 +199,7 @@ const PACKAGES: Record<Family, string[]> = {
 // Installed first, in this order (the package manager takes them in argument order).
 const PRIORITY_PACKAGES: Record<Family, string[]> = {
     arch: ["ungoogled-chromium", "git", "github-cli"],
-    debian: ["chromium", "git", "gh"], // Debian has no ungoogled-chromium
+    debian: ["git", "gh"],
 };
 
 const PERSONAL_PACKAGES: Record<Family, string[]> = {
@@ -202,6 +224,7 @@ const PERSONAL_PACKAGES: Record<Family, string[]> = {
         "wget",
     ],
     debian: [
+        "chromium", // Debian has no ungoogled-chromium
         "flameshot",
         "krita",
         "qbittorrent",
@@ -225,9 +248,7 @@ const HOME = homedir(),
     CARGO_BIN = join(HOME, ".cargo", "bin"),
     ZIG_DIR = join(HOME, ".local", "opt", "zig"),
     NERD_FONT_DIR = join(HOME, ".local", "share", "fonts", "InconsolataNerdFont"),
-    NVM_DIR = join(HOME, ".nvm"),
-    // nvm is a shell function, so its commands run through bash with nvm.sh sourced.
-    NVM_SOURCE = `export NVM_DIR="${NVM_DIR}"; . "$NVM_DIR/nvm.sh"`,
+    FNM_DIR = join(HOME, ".local", "share", "fnm"),
     isRoot = process.getuid?.() === 0;
 
 const shell = async (script: string) => void (await run("sh", ["-c", script]));
@@ -275,6 +296,9 @@ const FALLBACKS: Record<string, () => Promise<Outcome>> = {
         return "installed";
     },
 };
+
+/** WSL's kernel reports "microsoft" in /proc/version. */
+const isWsl = () => /microsoft/i.test(readFileSync("/proc/version", "utf8"));
 
 export function detectFamily(): Family {
     const release = readFileSync("/etc/os-release", "utf8"),
@@ -357,6 +381,9 @@ async function llvmRepo(): Promise<Outcome> {
         return "current";
     }
 
+    // gpg isn't in a minimal Debian install, and the key import below needs it.
+    await privileged("apt-get", ["update", "-qq"], APT_ENV);
+    await privileged("apt-get", ["install", "-y", "-qq", "gnupg"], APT_ENV);
     await privileged("sh", [
         "-c",
         `curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --yes --dearmor -o ${keyring} && printf 'Types: deb\\nURIs: https://apt.llvm.org/trixie/\\nSuites: llvm-toolchain-trixie-23\\nComponents: main\\nSigned-By: ${keyring}\\n' > ${sources}/llvm.sources`,
@@ -384,33 +411,33 @@ async function llvmAlternatives(): Promise<void> {
     await privileged("sh", ["-c", commands.join(" && ")]);
 }
 
-const NPM_PACKAGES = ["@caveman-ai/cli", "@colbymchenry/codegraph"];
+const NPM_PACKAGES = ["@caveman-ai/cli", "@colbymchenry/codegraph", "corepack"];
 
-/** Standalone pnpm: its installer verifies the npm signature, then runs `pnpm setup --force` (PNPM_HOME and PATH, so it is the default). Reruns upgrade it. */
+/** pnpm through Corepack (installed by NPM_PACKAGES): `enable` writes the pnpm shim into LOCAL_BIN, `install -g` caches the latest pnpm as the default. */
 async function installPnpm(): Promise<void> {
-    await shell("curl -fsSL https://get.pnpm.io/install.sh | sh -");
+    mkdirSync(LOCAL_BIN, { recursive: true });
+    await run("corepack", ["enable", "--install-directory", LOCAL_BIN, "pnpm"]);
+    await run("corepack", ["install", "-g", "pnpm@latest"]);
 }
 
 /**
- * Node.js through NVM, so global npm installs stay user-owned. PROFILE=/dev/null: PATH comes from `linkNodeBin`,
- * since NVM can't configure fish, the user's shell.
+ * Node.js through fnm, so global npm installs stay user-owned. The install script puts fnm in LOCAL_BIN and skips the
+ * shell rc edit (PATH comes from `linkNodeBin`, and fnm can't configure fish, the user's shell). `fnm default` points
+ * aliases/default at the latest stable (no pre-release tag, not LTS), which `linkNodeBin` reads.
  */
 async function installNode(): Promise<void> {
-    if (!existsSync(join(NVM_DIR, "nvm.sh"))) {
-        const { tag_name: tag } = await getJson<{ tag_name: string }>(
-            "https://api.github.com/repos/nvm-sh/nvm/releases/latest",
-        );
-        await shell(
-            `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/${tag}/install.sh | PROFILE=/dev/null bash`,
-        );
+    await shell(`curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "${LOCAL_BIN}" --skip-shell`);
+    const releases = await getJson<{ version: string }[]>("https://nodejs.org/dist/index.json"),
+        { version } = releases.find((release) => !release.version.includes("-"))!;
+    if (!existsSync(join(FNM_DIR, "node-versions", version))) {
+        await run("fnm", ["install", version], { env: { FNM_DIR } });
     }
-    await run("bash", ["-c", `${NVM_SOURCE} && nvm install node && nvm alias default node`]);
+    await run("fnm", ["default", version], { env: { FNM_DIR } });
 }
 
 /** Symlinks the default Node.js bin dir (node, npm, npx and global CLIs) into LOCAL_BIN, which is on PATH. Rerun after global installs. */
 async function linkNodeBin(): Promise<void> {
-    const binary = (await run("bash", ["-c", `${NVM_SOURCE} && nvm which default`])).trim(),
-        bin = dirname(binary);
+    const bin = join(FNM_DIR, "aliases", "default", "bin");
 
     mkdirSync(LOCAL_BIN, { recursive: true });
     for (const name of readdirSync(bin)) {
@@ -419,7 +446,7 @@ async function linkNodeBin(): Promise<void> {
     }
 }
 
-/** Global npm CLIs, pinned to `@latest` so reruns upgrade them. Arch's system npm has a root-owned prefix; Debian's NVM npm doesn't need root. */
+/** Global npm CLIs, pinned to `@latest` so reruns upgrade them. Arch's system npm has a root-owned prefix; Debian's fnm npm doesn't need root. */
 async function npmTools(report: Report, family: Family): Promise<void> {
     const install = family === "debian" ? run : privileged;
     for (const pkg of NPM_PACKAGES) {
@@ -463,21 +490,32 @@ async function installNerdFont(): Promise<Outcome> {
 export async function installLinux(report: Report) {
     process.env.PATH = [CARGO_BIN, LOCAL_BIN, ZIG_DIR, process.env.PATH].join(":");
 
-    const family = detectFamily();
+    const family = detectFamily(),
+        // Personal tools (GUI apps, browser, VS Code, terminal font) stay off WSL, where the GUI apps run on Windows.
+        personal = !isWsl();
     if (family === "debian") {
         await report.step("llvm apt repo", llvmRepo);
     }
     await installSystemPackages(
         family,
         report,
-        [...new Set([...PRIORITY_PACKAGES[family], ...PACKAGES[family], ...PERSONAL_PACKAGES[family]])],
+        [
+            ...new Set([
+                ...PRIORITY_PACKAGES[family],
+                ...PACKAGES[family],
+                ...(personal ? PERSONAL_PACKAGES[family] : []),
+            ]),
+        ],
         FALLBACKS,
     );
+    await enableGh();
     if (family === "debian") {
         await report.step("llvm alternatives", llvmAlternatives);
     }
     await report.step("git config", () => configureGit("git"));
-    await report.step("inconsolata nerd font", installNerdFont);
+    if (personal) {
+        await report.step("inconsolata nerd font", installNerdFont);
+    }
 
     if (family === "arch") {
         await report.step("paru", installParu);
@@ -508,7 +546,7 @@ export async function installLinux(report: Report) {
     }
     await npmTools(report, family);
     if (family === "debian") {
-        // npm globals land in the NVM bin dir, so they need linking too.
+        // npm globals land in the fnm bin dir, so they need linking too.
         await report.step("node bin", linkNodeBin);
     }
 

@@ -1,0 +1,73 @@
+name: Build libraries
+
+on:
+    workflow_dispatch:
+        inputs:
+            only:
+                description: "Only build these libraries (comma-separated, empty = all)"
+                default: ""
+            skip_pgo:
+                description: "Build llvm-project without PGO"
+                type: boolean
+                default: false
+
+# One build at a time: runs share the cached prefix and build-state.json.
+concurrency:
+    group: build-libs
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: windows-2025
+        timeout-minutes: 360
+        env:
+            INPUT_ONLY: ${{ inputs.only }}
+            INPUT_SKIP_PGO: ${{ inputs.skip_pgo }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+
+            - run: npm ci
+
+            # Resume: restores the installed libraries, the build state (which libraries are done) and the PGO profile
+            # from the latest earlier run, so a run that hit the 6 h limit continues where it stopped.
+            - uses: actions/cache/restore@v4
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                      dev/build-libs/pgo/llvm/profile.profdata
+                  key: libs-${{ github.run_id }}
+                  restore-keys: libs-
+
+            # Step timeout is shorter than the job's so the cache save and artifact upload below still run.
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Build
+              timeout-minutes: 335
+              shell: pwsh
+              run: |
+                  $buildArgs = @('--repos', 'C:/repos')
+                  if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
+                  if ($env:INPUT_SKIP_PGO -eq 'true') { $buildArgs += '--skip-pgo' }
+                  node dev/build-libs/index.ts @buildArgs
+
+            - uses: actions/cache/save@v4
+              if: always()
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                      dev/build-libs/pgo/llvm/profile.profdata
+                  key: libs-${{ github.run_id }}
+
+            - uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: libs-${{ github.run_number }}
+                  path: C:/dev-clang
+                  compression-level: 1
+                  retention-days: 14
+                  if-no-files-found: warn

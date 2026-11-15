@@ -14,6 +14,7 @@ interface CliOptions {
 
 interface ToolchainProfile {
     asan: boolean;
+    cxxStd?: string;
     rtti: boolean;
     debugOpt: boolean;
     fastmath: boolean;
@@ -93,6 +94,8 @@ interface Library {
     archiveSubdir?: string;
     build?: "CMake" | "Custom" | "Meson" | "Rust";
     name?: string;
+    // Only the release variant is built; the debug variant is skipped.
+    releaseOnly?: boolean;
     sourceSubdir?: string;
     tag: string;
     url: string;

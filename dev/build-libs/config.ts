@@ -10,6 +10,8 @@ export const LLVM_MINGW_I686 = "C:/PATH/llvm-mingw-msvcrt-i686"; // manual insta
 export const MSYS2_ROOT = "C:/msys64";
 export const REPOS_ROOT =`${ROOT}/Repos`;
 export const BUILD_STATE_FILE = `${ROOT}/build-state.json`;
+export const LLVM_PGO_DIR = `${ROOT}/pgo/llvm`;
+export const LLVM_PROFDATA = `${LLVM_PGO_DIR}/profile.profdata`;
 export const TOOLCHAINS_DIR = `${ROOT}/toolchains`;
 export const DEBUG_TOOLCHAIN = `${TOOLCHAINS_DIR}/debug.cmake`;
 export const RELEASE_TOOLCHAIN = `${TOOLCHAINS_DIR}/release.cmake`;
@@ -25,6 +27,14 @@ export const ICU_DATA_FILTERS = await readFile(`${ROOT}/patches/filters.json`, "
 export function setPrefix(prefix: string): void {
     DBG_ROOT = `${prefix}/debug`;
     REL_ROOT = `${prefix}/release`;
+}
+
+export type PgoMode = "all" | "only" | "skip";
+
+export let PGO_MODE: PgoMode = "all";
+
+export function setPgoMode(mode: PgoMode): void {
+    PGO_MODE = mode;
 }
 
 export function buildRoot(isDebug: boolean): string {

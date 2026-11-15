@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
-import { BUILD_STATE_FILE, buildRoot, DBG_ROOT, MSYS2_ROOT, REL_ROOT, WIN } from "./config.ts";
+import { BUILD_STATE_FILE, buildRoot, DBG_ROOT, MSYS2_ROOT, PGO_MODE, REL_ROOT, WIN } from "./config.ts";
 import { buildCMake, buildMeson, buildRust, customBuild, posthook, prehook } from "./hooks.ts";
 import { getPin, LIBRARIES, resolveLibraryName, shouldBuildLibrary } from "./libraries.ts";
 import { configureToolchain, updateEnv } from "./toolchain.ts";
@@ -20,8 +20,11 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     libjxl: { asan: false, debugOpt: true, fastmath: false, rtti: false },
     libraw: { asan: false, debugOpt: true, fastmath: false, rtti: false },
     libultrahdr: { asan: false, debugOpt: true, fastmath: false, rtti: true },
+    // C++20: libc++ makes unique_ptr constexpr in C++23, which breaks LLVM's TableGen Matchers.h (make_unique of an incomplete type).
+    "llvm-project": { asan: false, cxxStd: "20", debugOpt: false, fastmath: false, march: "znver1", mtune: "znver1", rtti: true },
     nuspell: { asan: false, debugOpt: true, fastmath: true, rtti: false },
     openexr: { asan: false, debugOpt: true, fastmath: false, rtti: true },
+    fltk: { asan: true, debugOpt: false, fastmath: true, rtti: true },
     projectm: { asan: false, debugOpt: false, fastmath: false, rtti: false },
     qt5: { asan: true, debugOpt: false, fastmath: true, rtti: true },
     "quickjs-ng": { asan: false, debugOpt: true, fastmath: false, rtti: false },
@@ -29,7 +32,7 @@ const TOOLCHAIN_PROFILES: Record<string, ToolchainProfile> = {
     "ruby-1.8.7": { asan: false, debugOpt: true, fastmath: false, rtti: true },
     "ruby-1.9.2": { asan: false, debugOpt: true, fastmath: false, rtti: true },
     "ruby-1.9.3": { asan: false, debugOpt: true, fastmath: false, rtti: true },
-    upx: { asan: false, debugOpt: true, fastmath: true, march: "native", mtune: "native", rtti: true },
+    upx: { asan: false, debugOpt: true, fastmath: true, march: "znver1", mtune: "znver1", rtti: true },
 };
 
 export async function buildRepos(options: CliOptions) {
@@ -54,6 +57,9 @@ export async function buildRepos(options: CliOptions) {
     const state = await loadBuildState();
 
     for (const library of selected) {
+        if (PGO_MODE === "only" && library.name !== "llvm-project") {
+            continue;
+        }
         console.info(`Building ${library.name}...`);
         await invokeRepoBuild(library, options, state);
     }
@@ -80,6 +86,9 @@ async function buildVariants(
 
     await configureToolchain(options, TOOLCHAIN_PROFILES[library.name!]);
     await prehook(library.name!, path);
+    if (PGO_MODE === "only") {
+        return;
+    }
 
     for (const isDebug of variants) {
         const vkey = `${library.name}:${isDebug ? "debug" : "release"}`;
@@ -196,7 +205,9 @@ async function invokeRepoBuild(library: Library, options: CliOptions, state: Bui
     const path = `${options.reposRoot}/${library.name}`,
         pin = getPin(library);
 
-    const variants = options.onlyDebug === options.onlyRelease ? [true, false] : options.onlyDebug ? [true] : [false];
+    const variants = (
+        options.onlyDebug === options.onlyRelease ? [true, false] : options.onlyDebug ? [true] : [false]
+    ).filter((isDebug) => !library.releaseOnly || !isDebug);
 
     if (
         variants.every((isDebug) =>
