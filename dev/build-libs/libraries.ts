@@ -2,10 +2,7 @@ export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
     { name: "opencl-headers", tag: "v2026.05.29", url: "https://github.com/KhronosGroup/OpenCL-Headers" },
     { tag: "v9.1.0", url: "https://github.com/stephenberry/glaze" },
-    { tag: "v8.3.3", url: "https://github.com/fastfloat/fast_float" },
-    { tag: "0.5.0", url: "https://github.com/ZXShady/enchantum" },
     { archPkg: "gtest", tag: "v1.18.0", url: "https://github.com/google/googletest" },
-    { tag: "0.11.26", url: "https://github.com/mackron/miniaudio" },
 
     { releaseOnly: true, tag: "v3.6.1", url: "https://github.com/microsoft/mimalloc" },
     { build: "Custom", tag: "v2.6.2", url: "https://github.com/autotools-mirror/libtool" },
