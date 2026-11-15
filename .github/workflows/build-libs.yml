@@ -43,6 +43,15 @@ jobs:
                   key: libs-${{ github.run_id }}
                   restore-keys: libs-
 
+            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
+            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+            - name: Update MSYS2
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
             # Step timeout is shorter than the job's so the cache save and artifact upload below still run.
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
