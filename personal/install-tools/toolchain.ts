@@ -39,6 +39,7 @@ export const MSYS2_BASE_PACKAGES = ["bison", "flex", "file", "autoconf", "automa
         "pkgconf",
         "glslang",
         "upx",
+        "sd",
     ];
 
 export type Bin = ((root: string) => string) | string;
