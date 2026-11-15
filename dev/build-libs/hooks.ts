@@ -706,7 +706,7 @@ export async function prehook(name: string, path: string) {
                 instClang = `${inst}/bin/clang.exe`,
                 instClangxx = `${inst}/bin/clang++.exe`,
                 instProfdata = `${inst}/bin/llvm-profdata.exe`,
-                cflags = "-O3 -march=znver1 -mtune=znver1",
+                cflags = "-O3 -march=x86-64-v3 -mtune=generic",
                 rawProfiles = async () =>
                     (await readdir(`${inst}/profiles`))
                         .filter((file) => file.endsWith(".profraw"))
