@@ -7,7 +7,7 @@
 import consola from "consola";
 import pc from "picocolors";
 
-import { getPin, resolveLibraryName } from "./libraries.ts";
+import type { Library } from "./types.ts";
 
 const MIRRORS = [
         "https://mirror.pkgbuild.com",
@@ -28,7 +28,7 @@ const MIRRORS = [
         "https://ftp.halifax.rwth-aachen.de/archlinux",
     ],
     MIRROR_REPOS = ["core", "extra"],
-    HEADERS = { "User-Agent": "build-dev-libraries-check-updates" },
+    HEADERS = { "User-Agent": "build-libs-check-updates" },
     SYNC_BUCKET_SECONDS = 3600;
 
 /**
@@ -121,9 +121,9 @@ function normalizeVersion(raw: string): string {
     return raw.replace(/^\D+/, "").replaceAll("-", ".");
 }
 
-function compareVersions(a: string, b: string): number {
-    const pa = a.split(".").map((x) => Number.parseInt(x, 10) || 0);
-    const pb = b.split(".").map((x) => Number.parseInt(x, 10) || 0);
+export function compareVersions(a: string, b: string): number {
+    const pa = a.split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
+    const pb = b.split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
     for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
         const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
         if (diff !== 0) {
@@ -137,10 +137,9 @@ export async function checkLibraryUpdates(libraries: Library[]): Promise<void> {
     const archVersions = await loadMirrorVersions();
 
     for (const library of libraries) {
-        const name = resolveLibraryName(library);
-        const pin = getPin(library);
+        const { name, source } = library;
 
-        const pinnedRaw = library.version ?? (library.archiveSubdir ? "" : pin);
+        const pinnedRaw = "archive" in source ? source.version : (library.version ?? source.tag);
         if (!pinnedRaw || !/\d/.test(pinnedRaw)) {
             consola.log(`${pc.dim(name.padEnd(20))} tracking a branch/no version tag, skipped`);
             continue;

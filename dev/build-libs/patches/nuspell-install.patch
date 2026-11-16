@@ -1,0 +1,22 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 65a2385..4447339 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -74,4 +74,3 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nuspell.pc
+ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/NuspellConfig.cmake
+ 	${CMAKE_CURRENT_BINARY_DIR}/NuspellConfigVersion.cmake
+ 	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nuspell)
+-install(FILES README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+diff --git a/docs/CMakeLists.txt b/docs/CMakeLists.txt
+index bbb4101..5de41c9 100644
+--- a/docs/CMakeLists.txt
++++ b/docs/CMakeLists.txt
+@@ -10,8 +10,6 @@ if (BUILD_MAN)
+ 			MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/nuspell.1.md
+ 			COMMENT "Building manpage nuspell.1")
+ 		add_custom_target(man_pages ALL DEPENDS nuspell.1)
+-		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nuspell.1
+-			DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+ 	endif()
+ endif()
+ 

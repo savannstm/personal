@@ -1,0 +1,12 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 78b54db..f818b44 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -342,7 +342,6 @@ install(TARGETS kvazaar
+   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+ install(FILES ${PROJECT_SOURCE_DIR}/src/kvazaar.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+-install(FILES ${PROJECT_SOURCE_DIR}/doc/kvazaar.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+ 
+ IF(UNIX)
+ # DIST

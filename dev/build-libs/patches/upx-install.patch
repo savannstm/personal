@@ -1,0 +1,16 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0f6e88d..06f58a2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -528,11 +528,6 @@ if(NOT UPX_CONFIG_CMAKE_DISABLE_INSTALL)
+ # install files
+ if(CMAKE_INSTALL_PREFIX AND DEFINED CMAKE_INSTALL_BINDIR AND DEFINED CMAKE_INSTALL_LIBDIR)
+     install(TARGETS upx DESTINATION "${CMAKE_INSTALL_BINDIR}")
+-    install(FILES
+-        COPYING LICENSE NEWS README doc/THANKS.txt doc/upx-doc.html doc/upx-doc.txt
+-        DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+-    )
+-    install(FILES doc/upx.1 DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+ else()
+     #message(FATAL_ERROR "ERROR: CMAKE_INSTALL_PREFIX is not defined")
+     message(WARNING "WARNING: CMAKE_INSTALL_PREFIX is not defined")

@@ -26,7 +26,6 @@ import {
     MSYS2,
     MSYS2_BASE_PACKAGES,
     MSYS2_MINGW_PACKAGES,
-    NODE_DIR,
     POWERSHELL,
     ROOT,
     type Toolchain,
@@ -57,6 +56,10 @@ const TMP = join(ROOT, ".tmp"),
     VERSIONS = join(ROOT, ".versions.json"),
     CARGO_BIN = join(homedir(), ".cargo", "bin"),
     TAR = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"),
+    // fnm's data dir: outside ROOT, since the fnm archive dir (ROOT\fnm) is wiped and replaced on every upgrade.
+    FNM_DIR = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "fnm"),
+    // fnm's default alias: the Node.js on PATH (node.exe, npm and global CLIs sit directly in it on Windows).
+    NODE_DEFAULT = join(FNM_DIR, "aliases", "default"),
     PWSH = join(ROOT, "pwsh", "pwsh.exe"),
     MACHINE_ENV_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
     MACHINE_ENV: [string, string][] = [["CARGO_BUILD_BUILD_DIR", join(homedir(), "cargo-build").replaceAll("\\", "/")]];
@@ -108,6 +111,8 @@ export interface Archive {
     extract?: (file: string, dest: string) => Promise<void>;
     /** Post-install hook, run on every invocation (fresh install or already current), so it must be idempotent. */
     after?: (root: string) => Promise<void>;
+    /** Runs before a fresh install replaces the old dir, to free files a running program holds. */
+    before?: () => Promise<unknown>;
 }
 
 // The elevated process and the main one both touch this file, so a read can land on a half-written (or externally
@@ -186,6 +191,7 @@ export async function installArchive(spec: Archive): Promise<Outcome> {
     const entries = readdirSync(out, { withFileTypes: true }),
         source = entries.length === 1 && entries[0]!.isDirectory() ? join(out, entries[0]!.name) : out;
 
+    await spec.before?.();
     rmSync(root, { force: true, recursive: true });
     renameSync(source, root);
     rmSync(work, { force: true, recursive: true });
@@ -194,6 +200,16 @@ export async function installArchive(spec: Archive): Promise<Outcome> {
     exposeArchive(spec);
     await spec.after?.(root);
     return "installed";
+}
+
+// Explorer keeps 7-Zip's shell extension loaded, which locks its files until Explorer restarts. Relaunched through
+// Shell.Application, so Explorer comes back as the desktop user rather than the elevated one.
+async function restartExplorer(): Promise<void> {
+    await run(POWERSHELL, [
+        "-NoProfile",
+        "-Command",
+        "$p = Get-Process explorer; $p | Stop-Process -Force; $p | Wait-Process; (New-Object -ComObject Shell.Application).ShellExecute('explorer.exe')",
+    ]);
 }
 
 async function nasmRelease(): Promise<Release> {
@@ -207,33 +223,6 @@ async function nasmRelease(): Promise<Release> {
         throw new Error("nasm: no release found");
     }
     return { url: `${base}${version}/win64/nasm-${version}-win64.zip`, version };
-}
-
-async function nodeInstaller(report: Report): Promise<{ step: ElevatedStep; version: string } | undefined> {
-    const releases = await getJson<{ lts: false | string; version: string }[]>("https://nodejs.org/dist/index.json"),
-        version = releases.find((r) => !r.lts)?.version;
-
-    if (!version) {
-        throw new Error("node: no current release found");
-    }
-    if (readVersions().node === version && existsSync(join(NODE_DIR, "node.exe"))) {
-        report.current.push("node");
-        return undefined;
-    }
-
-    const msi = join(TMP, `node-${version}-x64.msi`);
-    await download(`https://nodejs.org/dist/${version}/node-${version}-x64.msi`, msi);
-    // Restart Manager would close every process holding node.exe, this script included. Disabled, locked files are
-    // replaced on the next reboot instead (3010, which the step already reports as a reboot-required notice).
-    return {
-        step: [
-            "node",
-            "msiexec.exe",
-            ["/i", msi, "/qn", `INSTALLDIR=${NODE_DIR}`, "MSIRESTARTMANAGERCONTROL=Disable"],
-            1,
-        ],
-        version,
-    };
 }
 
 async function javaRelease(): Promise<Release> {
@@ -332,6 +321,7 @@ const ARCHIVES: Archive[] = [
         resolve: () => githubRelease("zellij-org/zellij", /^zellij-x86_64-pc-windows-msvc\.zip$/),
     },
     {
+        before: restartExplorer,
         bin: (root) => findDir(root, "7z.exe"),
         extract: extractMsi,
         name: "7zip",
@@ -407,7 +397,7 @@ const APPDATA = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
         ["github_dark.toml", join(APPDATA, "alacritty", "github_dark.toml")],
         ["config.toml", join(homedir(), ".cargo", "config.toml")],
         [".wslconfig", join(homedir(), ".wslconfig")],
-        ["CLAUDE.md", join(homedir(), ".claude", "CLAUDE.md")],
+        [".claude/CLAUDE.md", join(homedir(), ".claude", "CLAUDE.md")],
     ];
 
 function copyConfigs(): Outcome {
@@ -720,16 +710,6 @@ async function elevatedJobs(report: Report, toolchains: Toolchain[]) {
             }
         }
 
-        // Node is its own step, so a failed lookup only drops that step, not the msvc/wsl ones below.
-        const node = await nodeInstaller(report).catch((error: unknown) => {
-            report.failed.push(["node", error instanceof Error ? error.message : String(error)]);
-            return undefined;
-        });
-        if (node) {
-            steps.push(node.step);
-            stamps.set("node", node.version);
-        }
-
         if (toolchains.includes("msvc")) {
             steps.push(...(await msvcSteps(report)));
         }
@@ -879,7 +859,6 @@ async function installClaude(): Promise<Outcome> {
     return "installed";
 }
 
-// pnpm's installer verifies the npm signature, then runs `pnpm setup --force`: PNPM_HOME and the user PATH, so it is the default.
 // Old Ruby versions for building legacy projects: side by side in C:\PATH\<name>, deliberately not on PATH
 // (the current Ruby is the `ruby` archive). Pinned URLs, so the URL doubles as the version stamp. Newer branches follow below.
 const OLD_RUBIES: [string, string][] = [
@@ -940,30 +919,46 @@ async function installRuby(name: string, { url, version }: Release): Promise<Out
     return "installed";
 }
 
-async function installPnpm(): Promise<Outcome> {
-    const { version } = await getJson<{ version: string }>("https://registry.npmjs.org/pnpm/latest"),
-        home = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "pnpm");
+const FNM_ARCHIVE: Archive = {
+    bin: ".",
+    name: "fnm",
+    resolve: () => githubRelease("Schniz/fnm", /^fnm-windows\.zip$/),
+};
 
-    if (readVersions().pnpm === version && existsSync(home)) {
-        return "current";
+/** Latest current release (not LTS), like the MSI this replaces. Installs are user-owned, so no UAC. */
+async function installNode(): Promise<Outcome> {
+    const releases = await getJson<{ lts: false | string; version: string }[]>("https://nodejs.org/dist/index.json"),
+        version = releases.find((r) => !r.lts && !r.version.includes("-"))?.version;
+
+    if (!version) {
+        throw new Error("node: no current release found");
     }
 
-    await run(
-        POWERSHELL,
-        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://get.pnpm.io/install.ps1 | iex"],
-        { env: { PNPM_VERSION: version } },
-    );
-    setVersion("pnpm", version);
-    return "installed";
+    const installed = existsSync(join(FNM_DIR, "node-versions", version));
+    if (!installed) {
+        await run("fnm", ["install", version], { env: { FNM_DIR } });
+    }
+    await run("fnm", ["default", version], { env: { FNM_DIR } });
+    process.env.PATH = [NODE_DEFAULT, process.env.PATH].join(";");
+    return installed ? "current" : "installed";
 }
 
-const NPM_PACKAGES = ["@caveman-ai/cli", "@colbymchenry/codegraph"];
+const NPM_PACKAGES = ["@caveman-ai/cli", "@colbymchenry/codegraph", "corepack"];
 
-/** Global npm CLIs, pinned to `@latest` so reruns upgrade them. Runs npm's CLI with the bundled node.exe, since npm.cmd can't be spawned without a shell. */
+// npm and corepack are .cmd shims, which Windows can't spawn without a shell: cmd.exe resolves them through PATHEXT.
+const cmdRun = (command: string, args: string[]) => run("cmd.exe", ["/d", "/s", "/c", command, ...args]);
+
+/** pnpm through Corepack (installed by NPM_PACKAGES): `enable` writes the pnpm shim into BIN, `install -g` caches the latest pnpm as the default. */
+async function installPnpm(): Promise<void> {
+    await cmdRun("corepack", ["enable", "--install-directory", BIN, "pnpm"]);
+    await cmdRun("corepack", ["install", "-g", "pnpm@latest"]);
+}
+
+/** Global npm CLIs, pinned to `@latest` so reruns upgrade them. */
 async function npmTools(report: Report): Promise<void> {
     for (const pkg of NPM_PACKAGES) {
         await report.step(`npm:${pkg}`, async () => {
-            await run("npm", ["install", "-g", `${pkg}@latest`]);
+            await cmdRun("npm", ["install", "-g", `${pkg}@latest`]);
         });
     }
 }
@@ -1028,12 +1023,12 @@ export async function installWindows(report: Report, personal: Personal, toolcha
     // clang only: cargo's source fallbacks (gnullvm host) link with CLANG64's clang; msvc leaves CLANG64 untouched.
     process.env.PATH = [BIN, CARGO_BIN, ...(clangOnly ? [CLANG64_BIN] : []), process.env.PATH].join(";");
 
-    // Fixed order: chromium, git, gh. The first two resolve through the anonymous GitHub API (GITHUB_TOKEN is honored if set);
-    // gh resolves through the "latest" redirect and then serves every later release lookup.
-    await report.step(personal.chromium.name, () => installArchive(personal.chromium));
-    await report.step(GIT_ARCHIVE.name, () => installArchive(GIT_ARCHIVE));
+    // gh goes first: it resolves through the "latest" redirect, and enableGh then hands its login token to every later
+    // release lookup (chromium, git, ...), which would otherwise hit the anonymous API limit.
     await report.step(GH_ARCHIVE.name, () => installArchive(GH_ARCHIVE));
     await enableGh().catch(() => undefined);
+    await report.step(personal.chromium.name, () => installArchive(personal.chromium));
+    await report.step(GIT_ARCHIVE.name, () => installArchive(GIT_ARCHIVE));
 
     const elevated = track("runtimes & msvc", () => elevatedJobs(report, toolchains));
     // clang takes everything flagged clang64 from CLANG64 instead.
@@ -1046,10 +1041,11 @@ export async function installWindows(report: Report, personal: Personal, toolcha
         pool(RUBIES, 2, ([name, resolve]) => report.step(name, async () => installRuby(name, await resolve()))),
         ...(toolchains.includes("clang") ? [report.step("msys2", installMsys2)] : []),
         report.step("claude", installClaude),
-        report.step("pnpm", installPnpm),
         (async () => {
-            await elevated; // Node.js comes from the elevated MSI
+            await report.step("fnm", () => installArchive(FNM_ARCHIVE));
+            await report.step("node", installNode);
             await npmTools(report);
+            await report.step("pnpm", installPnpm);
         })(),
         report.step("inconsolata nerd font", installNerdFont),
         (async () => {
@@ -1084,7 +1080,7 @@ export async function installWindows(report: Report, personal: Personal, toolcha
     await report.step("vscode integration", personal.registerVscode);
 
     // Declaration order, not install-completion order, decides clashes (GyanD's ffmpeg.exe over Krita's).
-    const toolDirs = [personal.chromium, GIT_ARCHIVE, GH_ARCHIVE, UV, ...archives]
+    const toolDirs = [personal.chromium, GIT_ARCHIVE, GH_ARCHIVE, UV, FNM_ARCHIVE, ...archives]
         .filter(onPath)
         .map(archiveBin)
         .filter((dir): dir is string => dir !== undefined);
@@ -1094,6 +1090,7 @@ export async function installWindows(report: Report, personal: Personal, toolcha
             BIN,
             ...toolDirs,
             join(APPDATA, "npm"),
+            ...(existsSync(NODE_DEFAULT) ? [NODE_DEFAULT] : []),
             ...personal.programDirs.filter((dir) => existsSync(dir)),
         ]);
     });

@@ -1,0 +1,12 @@
+diff --git a/libarchive/CMakeLists.txt b/libarchive/CMakeLists.txt
+index ac039c1..f03d758 100644
+--- a/libarchive/CMakeLists.txt
++++ b/libarchive/CMakeLists.txt
+@@ -289,7 +289,6 @@ IF(ENABLE_INSTALL)
+           RUNTIME DESTINATION bin
+           LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+-  INSTALL_MAN(${libarchive_MANS})
+   INSTALL(FILES ${include_HEADERS} DESTINATION include)
+ ENDIF()
+ 

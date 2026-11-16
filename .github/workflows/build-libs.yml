@@ -1,0 +1,182 @@
+name: Build libraries
+
+on:
+    workflow_dispatch:
+        inputs:
+            only:
+                description: "Only build these libraries (comma-separated, empty = all)"
+                default: ""
+            retrain:
+                description: "Retrain the PGO profiles even if profiles for this build's sources and compiler are cached"
+                type: boolean
+                default: false
+
+# One build at a time: runs share the cached prefix and build-state.json.
+concurrency:
+    group: build-libs
+    cancel-in-progress: false
+
+jobs:
+    # The PGO profiles are named after a key of everything they're trained from (library versions, patches, trainers,
+    # compiler; see resolvePgoProfiles in pgo.ts) and cached under that name. Only a pipeline whose profile isn't cached
+    # for the current key is trained, so a library or compiler update retrains exactly what it affects.
+    pgo:
+        name: PGO
+        runs-on: windows-2025
+        outputs:
+            libs: ${{ steps.keys.outputs.libs }}
+            llvm: ${{ steps.keys.outputs.llvm }}
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+
+            - run: npm ci
+
+            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
+            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+            - name: Update MSYS2
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            # Installs the toolchain packages first (the keys include CLANG64's clang version), hence the filter.
+            - name: Profile keys
+              id: keys
+              shell: pwsh
+              run: |
+                  $keys = node dev/build-libs/index.ts --pgo clang,lld,libs --print-pgo-keys | Select-String '^(libs|llvm)='
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $keys | ForEach-Object { $_.Line } | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
+
+            - name: Restore the library profile
+              id: libs
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.libs }}
+                  key: pgo-${{ steps.keys.outputs.libs }}
+
+            - name: Restore the LLVM profile
+              id: llvm
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
+                  key: pgo-${{ steps.keys.outputs.llvm }}
+
+            # Trains only the missing profiles (index.ts skips a pipeline whose profile exists). LLVM's training needs
+            # llvm-project's sources and ImageMagick built, hence --only llvm-project; without it only the libraries train.
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Train
+              if: steps.libs.outputs.cache-hit != 'true' || steps.llvm.outputs.cache-hit != 'true'
+              shell: pwsh
+              run: |
+                  if ('${{ steps.llvm.outputs.cache-hit }}' -eq 'true') {
+                      node dev/build-libs/index.ts --repos C:/repos --pgo libs --pgo-train --magick-variants q16hdri
+                  } else {
+                      node dev/build-libs/index.ts --repos C:/repos --pgo clang,lld,libs --pgo-train --magick-variants q16hdri --only llvm-project
+                  }
+
+            - name: Save the library profile
+              if: always() && steps.libs.outputs.cache-hit != 'true' && hashFiles(format('dev/build-libs/pgo/profiles/{0}', steps.keys.outputs.libs)) != ''
+              uses: actions/cache/save@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.libs }}
+                  key: pgo-${{ steps.keys.outputs.libs }}
+
+            - name: Save the LLVM profile
+              if: always() && steps.llvm.outputs.cache-hit != 'true' && hashFiles(format('dev/build-libs/pgo/profiles/{0}', steps.keys.outputs.llvm)) != ''
+              uses: actions/cache/save@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
+                  key: pgo-${{ steps.keys.outputs.llvm }}
+
+    build:
+        needs: pgo
+        runs-on: windows-2025
+        env:
+            INPUT_ONLY: ${{ inputs.only }}
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+
+            - run: npm ci
+
+            # Resume: restores the installed libraries and the build state (which libraries are done) from the latest earlier run,
+            # so a run that hit the 6 h limit continues where it stopped.
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: libs-${{ github.run_id }}
+                  restore-keys: libs-
+
+            # Exactly the profiles for this build's key. Libraries built with a profile record its content in the build
+            # state, so a new profile rebuilds them and an unchanged one doesn't.
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.libs }}
+                  key: pgo-${{ needs.pgo.outputs.libs }}
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.llvm }}
+                  key: pgo-${{ needs.pgo.outputs.llvm }}
+
+            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
+            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+            - name: Update MSYS2
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,
+            # rust-src and the gnullvm target. The config's build dir is a path on the author's machine.
+            - name: Rust
+              shell: pwsh
+              run: |
+                  rustup toolchain install nightly-x86_64-pc-windows-gnullvm --profile minimal --component rust-src
+                  rustup default nightly-x86_64-pc-windows-gnullvm
+                  New-Item -ItemType Directory -Force "$HOME/.cargo" | Out-Null
+                  (Get-Content configs/config.toml -Raw) -replace 'build-dir = ".*"', 'build-dir = "C:/cargo-build"' | Set-Content "$HOME/.cargo/config.toml"
+
+            - name: Install cargo-c
+              uses: taiki-e/install-action@v2
+              with:
+                  tool: cargo-c
+
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Build
+              shell: pwsh
+              run: |
+                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'clang,lld,libs', '--exclude', 'ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
+                  if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
+                  node dev/build-libs/index.ts @buildArgs
+
+            - uses: actions/cache/save@v6
+              if: always()
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: libs-${{ github.run_id }}
+
+            - uses: actions/upload-artifact@v7
+              if: always()
+              with:
+                  name: libs-${{ github.run_number }}
+                  path: C:/dev-clang
+                  compression-level: 1
+                  retention-days: 14
+                  if-no-files-found: warn

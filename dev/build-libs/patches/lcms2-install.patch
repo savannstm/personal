@@ -1,0 +1,18 @@
+diff --git a/cmake/Lcms2Packaging.cmake b/cmake/Lcms2Packaging.cmake
+index ee92619..90d1e8f 100644
+--- a/cmake/Lcms2Packaging.cmake
++++ b/cmake/Lcms2Packaging.cmake
+@@ -46,13 +46,6 @@ function(lcms2_setup_packaging)
+     )
+   endif()
+ 
+-  # Manpages (installed regardless of whether the corresponding tool is built).
+-  if(DEFINED LCMS2_TOOL_MANPAGES)
+-    install(
+-      FILES ${LCMS2_TOOL_MANPAGES}
+-      DESTINATION "${CMAKE_INSTALL_MANDIR}/man1"
+-    )
+-  endif()
+ 
+   # CMake package config.
+   set(_lcms2_cmake_config_dir "${CMAKE_INSTALL_LIBDIR}/cmake/lcms2")

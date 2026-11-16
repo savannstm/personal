@@ -1,0 +1,14 @@
+diff --git a/build/meson/programs/meson.build b/build/meson/programs/meson.build
+index e103a62..04ed143 100644
+--- a/build/meson/programs/meson.build
++++ b/build/meson/programs/meson.build
+@@ -104,9 +104,6 @@ install_data(join_paths(zstd_rootdir, 'programs/zstdgrep'),
+ # Programs and manpages installing
+ # =============================================================================
+ 
+-install_man(join_paths(zstd_rootdir, 'programs/zstd.1'),
+-  join_paths(zstd_rootdir, 'programs/zstdgrep.1'),
+-  join_paths(zstd_rootdir, 'programs/zstdless.1'))
+ 
+ InstallSymlink_py = '../InstallSymlink.py'
+ zstd_man1_dir = join_paths(zstd_mandir, 'man1')

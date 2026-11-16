@@ -1,0 +1,14 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6476523..3a82b4c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -321,9 +321,6 @@ ENABLE_TESTING()
+ # Targets
+ ADD_SUBDIRECTORY(lib)
+ 
+-if(BUILD_DOC)
+-  ADD_SUBDIRECTORY(man)
+-endif()
+ 
+ if(BUILD_TOOLS)
+   ADD_SUBDIRECTORY(src)

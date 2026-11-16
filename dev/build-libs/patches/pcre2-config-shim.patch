@@ -1,0 +1,25 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 701233a..21e968c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1246,7 +1246,6 @@ else()
+   set(enable_pcre2_32 "no")
+ endif()
+ 
+-configure_file(pcre2-config.in pcre2-config @ONLY NEWLINE_STYLE LF)
+ 
+ # Executables
+ 
+@@ -1453,12 +1452,6 @@ install(
+ )
+ install(EXPORT pcre2-targets DESTINATION ${PCRE2_INSTALL_CMAKEDIR} NAMESPACE pcre2::)
+ install(FILES ${pkg_config_files} DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+-install(
+-  FILES "${PROJECT_BINARY_DIR}/pcre2-config"
+-  DESTINATION ${CMAKE_INSTALL_BINDIR}
+-  # Set 0755 permissions
+-  PERMISSIONS OWNER_WRITE OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+-)
+ 
+ install(FILES ${PCRE2_HEADERS} ${PCRE2POSIX_HEADERS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+ 

@@ -1,0 +1,32 @@
+diff --git a/CMake/install.cmake b/CMake/install.cmake
+index d36a0af..c278d6e 100644
+--- a/CMake/install.cmake
++++ b/CMake/install.cmake
+@@ -89,19 +89,6 @@ set(srcdir ".")
+ 
+ set(LIBNAME "${libdir}/libfltk.a")
+ 
+-configure_file(
+-  "${CMAKE_CURRENT_SOURCE_DIR}/fltk-config.in"
+-  "${CMAKE_CURRENT_BINARY_DIR}/bin/fltk-config"
+-  @ONLY
+-)
+-
+-# Install fltk-config
+-# Note: no need to set execute perms, install(PROGRAMS) does this
+-
+-install(PROGRAMS
+-  ${CMAKE_CURRENT_BINARY_DIR}/bin/fltk-config
+-  DESTINATION ${FLTK_BINDIR}
+-)
+ 
+ # Install man pages of fluid and fltk-options
+ 
+@@ -119,7 +106,6 @@ endif(FLTK_BUILD_FLUID)
+ if(FLTK_BUILD_FLTK_OPTIONS)
+   INSTALL_MAN (fltk-options 1)
+ endif(FLTK_BUILD_FLTK_OPTIONS)
+-INSTALL_MAN (fltk-config 1)
+ INSTALL_MAN (fltk 3)
+ 
+ # Install the games

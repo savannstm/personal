@@ -4,6 +4,7 @@ profile-rustflags = true
 
 [build]
 build-dir = "C:/Users/savannstm/cargo-build"
+rustc-wrapper = "sccache"
 
 [target.x86_64-pc-windows-msvc]
 rustflags = [
@@ -123,6 +124,7 @@ rustflags = [
     "-Clink-arg=-Wl,--build-id=none",
     "-Clink-arg=-Wl,--icf=all",
     "-Clink-arg=-Wl,--no-insert-timestamp",
+    "-Clink-arg=-static",
     "-Lnative=C:/dev-clang/release/lib",
 ]
 

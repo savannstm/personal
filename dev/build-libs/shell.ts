@@ -1,6 +1,6 @@
 import { $ } from "dax";
 
-import { MSYS2_ROOT, WIN } from "./config.ts";
+import { MSYS2_ROOT, WIN } from "./settings.ts";
 
 export const raw = (text: string) => $.rawArg(text);
 
