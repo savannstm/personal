@@ -30,7 +30,7 @@ import {
     WIN,
 } from "./settings.ts";
 import { raw } from "./shell.ts";
-import { configureToolchain, CONSUMER_PROFILE } from "./toolchain.ts";
+import { configureToolchain, CONSUMER_PROFILE, updateEnv } from "./toolchain.ts";
 import type { CliOptions, Library } from "./types.ts";
 
 // The ImageMagick variant the magick and lld trainers link; --magick-variants must include it for a training run.
@@ -474,6 +474,8 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
     if (settings.pgo.has("lld") && !existsSync(`${DEV_CLANG}/release/include/ImageMagick-7`)) {
         throw new Error(`--pgo lld links ImageMagick from ${DEV_CLANG}, which isn't built yet: build the libraries first.`);
     }
+    // prepare runs before buildVariants' updateEnv: without this, CFLAGS holds the last library's -fprofile-use, which -fprofile-generate rejects.
+    await updateEnv(false);
     for (const dir of ["instrument", "cs-instrument", "train", "lld-train"]) {
         await rm(`${LLVM_PGO_DIR}/${dir}`, { force: true, recursive: true });
     }
