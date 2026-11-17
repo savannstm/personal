@@ -596,10 +596,15 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
     await $`${instProfdata} merge -output=${irProfdata} ${await train(inst, `${inst}/profiles`)}`.env(clang64Env);
 
     // 2. Context-sensitive profile, from a full-LTO build like the final one. One link job: two full-LTO links at once can run out of memory.
+    // -u doesn't make the LTO link pull the runtime's name variable from its archive, so link that member's object directly.
+    const csNameDir = `${LLVM_PGO_DIR}/cs-name`;
+    await rm(csNameDir, { force: true, recursive: true });
+    await mkdir(csNameDir, { recursive: true });
+    await $`${clang64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`.cwd(csNameDir).env(clang64Env);
     await buildInstrumented(
         csInst,
         csCflags,
-        ["-DLLVM_BUILD_INSTRUMENTED=CSIR", `-DLLVM_PROFDATA_FILE=${irProfdata}`, "-DLLVM_ENABLE_LTO=Full", "-DLLVM_PARALLEL_LINK_JOBS=1", `-DCMAKE_EXE_LINKER_FLAGS=${CS_LINK_NAME_VAR}`],
+        ["-DLLVM_BUILD_INSTRUMENTED=CSIR", `-DLLVM_PROFDATA_FILE=${irProfdata}`, "-DLLVM_ENABLE_LTO=Full", "-DLLVM_PARALLEL_LINK_JOBS=1", `-DCMAKE_EXE_LINKER_FLAGS=${csNameDir}/InstrProfilingNameVar.c.obj`],
         tools,
     );
     await mkdir(PROFILES_DIR, { recursive: true });
