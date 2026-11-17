@@ -139,6 +139,10 @@ const TRAINERS: Trainer[] = [
 // Everything the trainers exercise: what the library pipeline builds with the profile.
 export const PGO_LIBRARIES: ReadonlySet<string> = new Set(TRAINERS.flatMap((trainer) => trainer.libraries));
 
+// Link-only context-sensitive instrumentation emits no __llvm_profile_filename, which the profile runtime references
+// (.refptr on COFF); lld doesn't pull its definition from the runtime archive without this force-include.
+const CS_LINK_NAME_VAR = "-Wl,-u,__llvm_profile_filename";
+
 // Windows system libraries the trainers link after the archive group.
 const PGO_SYSTEM_LIBS = [
     "advapi32",
@@ -382,7 +386,7 @@ async function runTrainers(prefix: string, stage: "cs" | "ir"): Promise<Map<stri
                   ],
         // Context-sensitive instrumentation on the link only: with it on the trainer's own compile as well, the LTO link
         // drops the profile file name variable and the profile runtime can't resolve __llvm_profile_filename.
-        linkFlags = stage === "ir" ? [] : ["-Wl,--lto-O3", "-fcs-profile-generate"],
+        linkFlags = stage === "ir" ? [] : ["-Wl,--lto-O3", "-fcs-profile-generate", CS_LINK_NAME_VAR],
         profiles = new Map<string, string[]>();
 
     for (const trainer of TRAINERS) {
@@ -595,7 +599,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
     await buildInstrumented(
         csInst,
         csCflags,
-        ["-DLLVM_BUILD_INSTRUMENTED=CSIR", `-DLLVM_PROFDATA_FILE=${irProfdata}`, "-DLLVM_ENABLE_LTO=Full", "-DLLVM_PARALLEL_LINK_JOBS=1"],
+        ["-DLLVM_BUILD_INSTRUMENTED=CSIR", `-DLLVM_PROFDATA_FILE=${irProfdata}`, "-DLLVM_ENABLE_LTO=Full", "-DLLVM_PARALLEL_LINK_JOBS=1", `-DCMAKE_EXE_LINKER_FLAGS=${CS_LINK_NAME_VAR}`],
         tools,
     );
     await mkdir(PROFILES_DIR, { recursive: true });
