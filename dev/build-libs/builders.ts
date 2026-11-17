@@ -32,11 +32,12 @@ export async function buildCMake(library: Library, ctx: Ctx) {
         cwd = library.sourceSubdir ? `${path}/${library.sourceSubdir}` : path,
         dir = buildDir(isDebug),
         toolchainFile = isDebug ? DEBUG_TOOLCHAIN : RELEASE_TOOLCHAIN;
-    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}`.cwd(
-        cwd,
-    );
+    const env = { ...process.env, ...library.env };
+    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}`
+        .cwd(cwd)
+        .env(env);
     if (library.cmakeTarget) {
-        await $`cmake --build ${dir} -j --target ${library.cmakeTarget}`.cwd(cwd);
+        await $`cmake --build ${dir} -j --target ${library.cmakeTarget}`.cwd(cwd).env(env);
         return;
     }
     await $`cmake --build ${dir} -j`.cwd(cwd);

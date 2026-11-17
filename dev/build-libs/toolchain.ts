@@ -512,7 +512,14 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     // pkg-config must only see this prefix's .pc files, else it resolves libs from another build type
     const prefix = cq(b.prefix).slice(1, -1),
         pcDirs = [`${prefix}/lib/pkgconfig`, `${prefix}/share/pkgconfig`];
-    lines.push(`set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(WIN ? ";" : ":")}")`);
+    // llvm-project sets the LLVM_DEPS_PREFIX env var (Library.env) to resolve its libxml2 deps from CLANG64. An env var, not a -D cache
+    // entry: LLVM's try_compile checks run this file without the -D entries, and would otherwise reset PKG_CONFIG_PATH here.
+    lines.push("if (DEFINED ENV{LLVM_DEPS_PREFIX})");
+    lines.push('    set(CMAKE_PREFIX_PATH "$ENV{LLVM_DEPS_PREFIX}" CACHE STRING "" FORCE)');
+    lines.push('    set(ENV{PKG_CONFIG_PATH} "$ENV{LLVM_DEPS_PREFIX}/lib/pkgconfig;$ENV{LLVM_DEPS_PREFIX}/share/pkgconfig")');
+    lines.push("else()");
+    lines.push(`    set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(WIN ? ";" : ":")}")`);
+    lines.push("endif()");
 
     if (b.toolchain === "msvc") {
         lines.push('if (NOT CMAKE_BINARY_DIR MATCHES "/CMakeFiles/CMakeScratch/")');

@@ -57,6 +57,8 @@ export interface Library {
     msys2?: string;
     // Extra configure arguments for CMake, Meson or cargo.
     args?: (ctx: Ctx) => string;
+    // Extra environment for the CMake configure and build.
+    env?: Record<string, string>;
     // Once per checkout, after `git reset --hard` and before the variants (source patches, submodules).
     prepare?: (ctx: Omit<Ctx, "isDebug" | "root" | "step">) => Promise<void>;
     // Per variant, right after it was installed and before the next variant's `git clean -fdx` (import lib renames, PDBs).
