@@ -13,7 +13,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { basename } from "node:path";
 import pc from "picocolors";
 
-import { getPin, LIBRARIES } from "./libraries.ts";
+import { getPin, LIBRARIES, LLVM_DIST_COMPONENTS } from "./libraries.ts";
 import { buildRepos, profileOf } from "./runner.ts";
 import {
     DEV_CLANG,
@@ -310,7 +310,7 @@ export async function resolvePgoProfiles() {
     settings.llvmProfdata = `${PROFILES_DIR}/llvm-${targets}-${hash([
         ...shared,
         // Its args point at the profile itself once that exists.
-        ...(await describe(llvm)).map((part) => part.replace(/ -DLLVM_PROFDATA_FILE=\S+/, "")),
+        ...(await describe(llvm)).map((part) => part.replace(/ -DLLVM_PROFDATA_FILE=\S+/, "").replace(/ -DLLVM_DISTRIBUTION_COMPONENTS="[^"]*" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="[^"]*"/, ` -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"`)),
         targets,
         String(trainLlvm),
     ])}.profdata`;
