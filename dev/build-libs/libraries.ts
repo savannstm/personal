@@ -59,7 +59,7 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
 };
 
 // CLANG64 packages installed on clang with no library record of their own (mesa's record is commented out below).
-export const MSYS2_EXTRA = ["mesa"];
+export const MSYS2_EXTRA = ["mesa", "imagemagick"];
 
 // The march the final clang/lld is built for; its PGO context-sensitive stage matches it.
 const LLVM_MARCH = "znver1",

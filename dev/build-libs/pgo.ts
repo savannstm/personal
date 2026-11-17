@@ -541,7 +541,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
 
         if (withLld) {
             // lld training (not part of the upstream script): link ImageMagick and its dependency chain with the instrumented ld.lld,
-            // driven by the regular clang. Release is a static full-LTO link (the LTO path), debug a non-LTO ASAN/DWARF link against the import libs.
+            // driven by the regular clang. Release is a static full-LTO link (the LTO path), debug a non-LTO ASAN/DWARF link against MSYS2's dynamic ImageMagick (the import-lib path).
             const linkBase = [
                     "--target=x86_64-w64-windows-gnu",
                     "-std=gnu++23",
@@ -574,8 +574,8 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
                     "-fsanitize=address",
                     "-D_DLL",
                     ...magickDefs,
-                    `-I${DEV_CLANG}/debug/include/ImageMagick-7`,
-                    `-L${DEV_CLANG}/debug/lib`,
+                    `-I${clang64}/include/ImageMagick-7`,
+                    `-L${clang64}/lib`,
                     `-lMagickWand-7.${magickSuffix(MAGICK_PGO_VARIANT)}`,
                     "-o",
                     `${lldDir}/debug.exe`,
