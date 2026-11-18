@@ -100,6 +100,7 @@ export const LLVM_DIST_COMPONENTS = [
     "llvm-strip",
     "llvm-symbolizer",
     "llvm-windres",
+    "openmp",
     "unwind",
     "unwind-headers",
 ].join(";");
@@ -115,7 +116,7 @@ const runtimeDistComponents = () =>
         : LLVM_RUNTIME_DIST_COMPONENTS.join(";");
 
 const llvmArgs = () =>
-    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
+    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBOMP_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
 
 const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define HAVE_INTTYPES_H 1
@@ -1209,7 +1210,11 @@ export const LIBRARIES: Library[] = [
         // CLANG64's pkg-config resolves libxml2's static deps (iconv, bcrypt, zlib) for LLVM's static libxml2 check.
         env: { LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64` },
         // A training run trains the profile here, before the build that uses it.
-        prepare: ({ path }) => trainLlvm(path, llvmArgs(), LLVM_MAJOR, LLVM_MARCH),
+        prepare: async ({ path }) => {
+            // Static libomp on Windows: LLVM refuses LIBOMP_ENABLE_SHARED=OFF there; this is the patch MSYS2 applies for its static llvm-openmp.
+            await applyPatch(path, "llvm-openmp-static-windows.patch");
+            await trainLlvm(path, llvmArgs(), LLVM_MAJOR, LLVM_MARCH);
+        },
         // The LLVM profile changes the output without changing the pin, so its content is part of the build state too.
         statePin: (pin) =>
             `${pin}+runtimes${llvmPgo() && existsSync(settings.llvmProfdata) ? `+pgo-${profileHash(settings.llvmProfdata)}` : ""}`,
