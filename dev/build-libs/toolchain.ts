@@ -125,12 +125,21 @@ function replaceEntry(existing: string | undefined, active: string, inactive: st
     return [...rest, active].join(SEP);
 }
 
+/** Drops entries under the other build's prefix, which earlier updateEnv calls left in the inherited env. */
+function dropInactiveRoot(existing: string | undefined, inactiveRoot: string): string {
+    return (existing ?? "")
+        .split(SEP)
+        .filter((entry) => !entry.startsWith(`${inactiveRoot}/`))
+        .join(SEP);
+}
+
 export async function updateEnv(isDebug: boolean) {
     const { cFlags, cxxFlags, includeFlags, ldFlags, root } = await computeFlags(isDebug),
-        { tools } = toolchainState();
+        { tools } = toolchainState(),
+        inactiveRoot = buildRoot(!isDebug);
 
     const pkgConfPath = dedupPath(
-        `${root}/lib/pkgconfig${SEP}${root}/share/pkgconfig${SEP}${process.env.PKG_CONFIG_PATH ?? ""}`,
+        `${root}/lib/pkgconfig${SEP}${root}/share/pkgconfig${SEP}${dropInactiveRoot(process.env.PKG_CONFIG_PATH, inactiveRoot)}`,
         SEP,
     );
 
@@ -152,15 +161,15 @@ export async function updateEnv(isDebug: boolean) {
         ADDR2LINE: tools.addr2line,
         AR: tools.ar,
         AS: tools.asm,
-        C_INCLUDE_PATH: dedupPath(`${root}/include${SEP}${process.env.C_INCLUDE_PATH ?? ""}`, SEP),
+        C_INCLUDE_PATH: dedupPath(`${root}/include${SEP}${dropInactiveRoot(process.env.C_INCLUDE_PATH, inactiveRoot)}`, SEP),
         CC: tools.cc,
         CFLAGS: `${cFlags} ${includeFlags}`,
-        CPATH: dedupPath(`${root}/include${SEP}${process.env.CPATH ?? ""}`, SEP),
+        CPATH: dedupPath(`${root}/include${SEP}${dropInactiveRoot(process.env.CPATH, inactiveRoot)}`, SEP),
         CXX: tools.cxx,
         CXXFLAGS: `${cxxFlags} ${includeFlags}`,
         LD: tools.cc,
         LDFLAGS: `${ldFlags} -L${root}/lib ${includeFlags}`,
-        LIBRARY_PATH: dedupPath(`${root}/lib${SEP}${process.env.LIBRARY_PATH ?? ""}`, SEP),
+        LIBRARY_PATH: dedupPath(`${root}/lib${SEP}${dropInactiveRoot(process.env.LIBRARY_PATH, inactiveRoot)}`, SEP),
         NM: tools.nm,
         OBJCOPY: tools.objcopy,
         OBJDUMP: tools.objdump,
