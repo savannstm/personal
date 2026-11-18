@@ -1,6 +1,3 @@
-// Every library, in build order: a library comes after everything it links. One record holds all of a library's
-// build configuration; see the Library type in types.ts for the fields and when each hook runs.
-
 import consola from "consola";
 import $ from "dax";
 import { existsSync } from "node:fs";
@@ -45,7 +42,6 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
         codecs: "--enable-decoder=aac,ac3,alac,dca,eac3,flac,mp3float,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,truehd,vorbis --enable-demuxer=aac,ac3,aiff,avi,caf,dts,eac3,flac,matroska,mov,mp3,ogg,truehd,wav --enable-parser=aac,ac3,dca,flac,mlp,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
         consumers: [["rap", "RAP_FFMPEG_ROOT"]],
     },
-    // Only the formats nearly everything is in; the demuxers are the same as RAP's, they cost next to nothing.
     trap: {
         codecs: "--enable-decoder=aac,alac,flac,mp3float,opus,pcm_f32le,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,vorbis --enable-demuxer=aac,aiff,avi,flac,matroska,mov,mp3,ogg,wav --enable-parser=aac,flac,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
         consumers: [["rap", "TRAP_FFMPEG_ROOT"]],
@@ -54,23 +50,18 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
         codecs: "--enable-demuxer=asf,avi,flac,matroska,mov,mp3,mpegps,ogg,wav --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,flac,h264,mjpeg,mp2float,mp3float,mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,pcm_s8,pcm_mulaw,pcm_alaw,pcm_dvd,theora,vc1,vorbis,vp8,vp9,wmav1,wmav2,wmv1,wmv2,wmv3 --enable-parser=h264,mpeg4video,mpegvideo,vc1",
         consumers: [["rpgmtranslate", "FFMPEG_ROOT"]],
     },
-    // vu: video only, audio is ignored, so no audio decoders, parsers or filters. Modern video (H.264, HEVC,
-    // VP8/VP9, AV1 through dav1d) plus MPEG-4 Part 2 and Theora, which AVI and OGV files still commonly hold.
     vu: {
         codecs: "--enable-libdav1d --enable-zlib --enable-decoder=libdav1d,h264,hevc,vp8,vp9,mpeg4,theora,gif,apng,webp,webp_anim --enable-demuxer=matroska,mov,avi,ogg,gif,apng,webp,webp_anim --enable-parser=av1,h264,hevc,vp8,vp9,mpeg4video,gif,png",
         consumers: [["vu", "FFMPEG_ROOT"]],
     },
 };
 
-// CLANG64 packages installed on clang with no library record of their own (mesa's record is commented out below).
 export const MSYS2_EXTRA = ["mesa", "imagemagick"];
 
-// The march the final clang/lld is built for; its PGO context-sensitive stage matches it.
 const LLVM_MARCH = "znver1",
     LLVM_TAG = "llvmorg-23.1.6",
     LLVM_MAJOR = LLVM_TAG.replace(/^llvmorg-/, "").split(".")[0]!;
 
-// Only the tools I use: everything else (each a slow full-LTO link) is skipped. Symlinks (ld.lld, clang++, ...) come with their target's component.
 export const LLVM_DIST_COMPONENTS = [
     "clang",
     "clang-format",
@@ -100,11 +91,9 @@ export const LLVM_DIST_COMPONENTS = [
     "llvm-strip",
     "llvm-symbolizer",
     "llvm-windres",
-    "openmp",
     "unwind",
     "unwind-headers",
 ].join(";");
-// Header components are runtime components: LLVM creates their top-level install targets only from LLVM_RUNTIME_DISTRIBUTION_COMPONENTS.
 const LLVM_RUNTIME_DIST_COMPONENTS = ["cxx-headers", "cxxabi-headers", "unwind-headers"];
 const LLVM_TOP_DIST_COMPONENTS = LLVM_DIST_COMPONENTS.split(";")
     .filter((component) => !LLVM_RUNTIME_DIST_COMPONENTS.includes(component))
@@ -116,7 +105,7 @@ const runtimeDistComponents = () =>
         : LLVM_RUNTIME_DIST_COMPONENTS.join(";");
 
 const llvmArgs = () =>
-    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBOMP_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
+    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
 
 const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define HAVE_INTTYPES_H 1
@@ -240,7 +229,7 @@ export const LIBRARIES: Library[] = [
 
     {
         name: "mimalloc",
-        source: { git: "https://github.com/microsoft/mimalloc", tag: "v3.6.1" },
+        source: { git: "https://github.com/microsoft/mimalloc", tag: "v3.7.0" },
         releaseOnly: true,
         msys2: "mimalloc",
         args: ({ isDebug }) =>
@@ -311,7 +300,6 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // Compiled directly from its sources.
         name: "bzip2",
         source: { git: "https://sourceware.org/git/bzip2", tag: "bzip2-1.0.8" },
         version: "1.0.8",
@@ -535,7 +523,7 @@ export const LIBRARIES: Library[] = [
     },
     {
         name: "dav1d",
-        source: { git: "https://code.videolan.org/videolan/dav1d", tag: "1.5.4" },
+        source: { git: "https://code.videolan.org/videolan/dav1d", tag: "1.5.5" },
         build: "meson",
         msys2: "dav1d",
         args: () =>
@@ -600,7 +588,7 @@ export const LIBRARIES: Library[] = [
 
             await $`sd -s -- "OUTPUTFILE=icupkg.inc" "OUTPUTFILE=icupkg.inc\nCFLAGS += -fno-lto\nCXXFLAGS += -fno-lto\nLDFLAGSICUDT += -fno-lto" ${`${path}/icu4c/source/data/pkgdataMakefile.in`}`;
 
-            // Builds go to another device than the final install dir, and NTFS can't symlink across devices: install copies instead.
+            // Builds may go to another device, avoid symlinks
             for (const dir of [".", "common", "i18n", "io", "stubdata", "tools/toolutil"]) {
                 await $`sd -s -- "ln -s" "cp -rf" Makefile.in`.cwd(`${path}/icu4c/source/${dir}`);
             }
@@ -677,6 +665,26 @@ export const LIBRARIES: Library[] = [
             await applyPatch(path, "libwebp-install.patch");
         },
     },
+    {
+        name: "libspng",
+        source: { git: "https://github.com/randy408/libspng", tag: "v0.7.4" },
+        msys2: "libspng",
+        args: ({ isDebug }) => `-DENABLE_OPT=ON -DSPNG_SHARED=${cmakeVal(isDebug)} -DSPNG_STATIC=${cmakeVal(!isDebug)}`,
+        finish: async ({ root }) => {
+            await $`sd -s -- "find_dependency(ZLIB REQUIRED)" "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)" ${`${root}/lib/cmake/spng/SPNGConfig.cmake`}`;
+        },
+    },
+    {
+        // TODO: Switch to v4.2.0 when it comes out
+        name: "projectm",
+        source: { git: "https://github.com/projectM-visualizer/projectm", tag: "master" },
+        archPkg: "libprojectm",
+        profile: { debugOpt: false },
+        args: () => "-DENABLE_DEBUG_POSTFIX=OFF -DENABLE_PLAYLIST=OFF",
+        prepare: async ({ path }) => {
+            await $`git submodule update --depth 1 --init --recursive`.cwd(path);
+        },
+    },
 
     // --- Tier 1: depend only on Tier 0 libs ---
     {
@@ -690,15 +698,6 @@ export const LIBRARIES: Library[] = [
             if (WIN && !isDebug && !msvc) {
                 await copyLib(root, "OpenCL.a", "libOpenCL.a");
             }
-        },
-    },
-    {
-        name: "libspng",
-        source: { git: "https://github.com/randy408/libspng", tag: "v0.7.4" },
-        msys2: "libspng",
-        args: ({ isDebug }) => `-DENABLE_OPT=ON -DSPNG_SHARED=${cmakeVal(isDebug)} -DSPNG_STATIC=${cmakeVal(!isDebug)}`,
-        finish: async ({ root }) => {
-            await $`sd -s -- "find_dependency(ZLIB REQUIRED)" "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)" ${`${root}/lib/cmake/spng/SPNGConfig.cmake`}`;
         },
     },
     {
@@ -718,17 +717,6 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // TODO: Switch to v4.2.0 when it comes out
-        name: "projectm",
-        source: { git: "https://github.com/projectM-visualizer/projectm", tag: "master" },
-        archPkg: "libprojectm",
-        profile: { debugOpt: false },
-        args: () => "-DENABLE_DEBUG_POSTFIX=OFF -DENABLE_PLAYLIST=OFF",
-        prepare: async ({ path }) => {
-            await $`git submodule update --depth 1 --init --recursive`.cwd(path);
-        },
-    },
-    {
         name: "libpng",
         source: { git: "https://github.com/pnggroup/libpng", tag: "v1.6.59" },
         msys2: "libpng",
@@ -744,7 +732,8 @@ export const LIBRARIES: Library[] = [
                     path,
                 );
             }
-            // Drops libpng's check that zlib.h's ZLIB_VERNUM matches the one it was configured with; zlib-ng is API-compatible, so the check only breaks the build.
+
+            // Causes fail in CI for some reason
             await $`sd -s -- "#  error The include path of <zlib.h> is incorrect" "" pngpriv.h`.cwd(path);
         },
         finish: async ({ isDebug, msvc, root }) => {
@@ -762,8 +751,6 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // Static ICU (release) must be consumed with U_STATIC_IMPLEMENTATION, otherwise ICU's U_EXPORT/U_IMPORT
-        // expand to __declspec(dllexport)/dllimport. Shared (debug) ICU keeps the default.
         name: "nuspell",
         source: { git: "https://github.com/nuspell/nuspell", tag: "v5.1.9" },
         msys2: "nuspell",
@@ -776,7 +763,6 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // Autotools build of the Windows source zip.
         name: "libraw",
         source: {
             archive: "https://www.libraw.org/data/LibRaw-0.22.3-Win64.zip",
@@ -1098,7 +1084,7 @@ export const LIBRARIES: Library[] = [
     {
         // One build per ImageMagick variant (--magick-variants).
         name: "imagemagick",
-        source: { git: "https://github.com/imagemagick/imagemagick", tag: "7.1.2-35" },
+        source: { git: "https://github.com/imagemagick/imagemagick", tag: "7.1.2-36" },
         profile: { asan: true, debugOpt: false },
         prepare: async ({ msvc, path }) => {
             // Swaps GPL FFTW3 for BSD-licensed PocketFFT, amalgamated into fourier.c. Safe to
@@ -1149,7 +1135,6 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // Qt's configure script driving CMake; only the submodules listed.
         name: "qt5",
         source: { git: "https://github.com/qt/qt5", tag: "v6.12.0" },
         archPkg: "qt6-base",
@@ -1210,11 +1195,7 @@ export const LIBRARIES: Library[] = [
         // CLANG64's pkg-config resolves libxml2's static deps (iconv, bcrypt, zlib) for LLVM's static libxml2 check.
         env: { LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64` },
         // A training run trains the profile here, before the build that uses it.
-        prepare: async ({ path }) => {
-            // Static libomp on Windows: LLVM refuses LIBOMP_ENABLE_SHARED=OFF there; this is the patch MSYS2 applies for its static llvm-openmp.
-            await applyPatch(path, "llvm-openmp-static-windows.patch");
-            await trainLlvm(path, llvmArgs(), LLVM_MAJOR, LLVM_MARCH);
-        },
+        prepare: ({ path }) => trainLlvm(path, llvmArgs(), LLVM_MAJOR, LLVM_MARCH),
         // The LLVM profile changes the output without changing the pin, so its content is part of the build state too.
         statePin: (pin) =>
             `${pin}+runtimes${llvmPgo() && existsSync(settings.llvmProfdata) ? `+pgo-${profileHash(settings.llvmProfdata)}` : ""}`,
