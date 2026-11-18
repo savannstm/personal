@@ -78,7 +78,7 @@ function parseCliArgs(): CliOptions {
         )
         .option(
             "--pgo <targets>",
-            "Comma-separated PGO targets, or `off`. clang, lld: train llvm-project's profile on compiling clang and linking ImageMagick (lld needs the libraries built). libs: profile the libraries with trainers in patches/pgo (ImageMagick and its chain, harfbuzz/freetype, quickjs, nuspell, libarchive) first (alone, it stops after that)",
+            "Comma-separated PGO targets, or `off`. clang, lld: train llvm-project's profile on compiling clang and linking ImageMagick (lld needs the libraries built). With --pgo-train, llvm-project stops after its profile is trained (no build). libs: profile the libraries with trainers in patches/pgo (ImageMagick and its chain, harfbuzz/freetype, quickjs, nuspell, libarchive) first (alone, it stops after that)",
             "clang,lld,libs",
         )
         .option(

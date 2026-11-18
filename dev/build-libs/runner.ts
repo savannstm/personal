@@ -7,7 +7,7 @@ import pc from "picocolors";
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
 import { getPin, LIBRARIES, shouldBuildLibrary } from "./libraries.ts";
 import { libsProfileTag } from "./pgo.ts";
-import { BUILD_STATE_FILE, buildRoot, MSYS2_ROOT, WIN } from "./settings.ts";
+import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN } from "./settings.ts";
 import { configureToolchain, CONSUMER_PROFILE, DEFAULT_PROFILE, updateEnv } from "./toolchain.ts";
 import type { BuildState, CliOptions, Ctx, Library, Toolchain, ToolchainProfile } from "./types.ts";
 
@@ -160,7 +160,13 @@ async function buildVariants(
     }
 
     await configureToolchain(options, profileOf(library));
+    // A training run stops once llvm-project's profile is trained (its prepare): the profiled build is the LLVM job's.
+    const trainsLlvm = library.name === "llvm-project" && settings.pgoTraining && llvmPgo() && !existsSync(settings.llvmProfdata);
     await library.prepare?.({ msvc, path });
+    if (trainsLlvm) {
+        consola.success(pc.green("LLVM profile trained; skipping the build."));
+        process.exit(0);
+    }
 
     for (const isDebug of variants) {
         const variant = isDebug ? "debug" : "release",
