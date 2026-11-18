@@ -30,7 +30,11 @@ async function applyPatch(path: string, patch: string): Promise<void> {
     try {
         await $`git apply ${`${ROOT}/patches/${patch}`}`.cwd(path);
     } catch (error) {
-        consola.warn(pc.yellow(`Patch ${patch} did not apply in ${path}: ${error instanceof Error ? error.message : String(error)}`));
+        consola.warn(
+            pc.yellow(
+                `Patch ${patch} did not apply in ${path}: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+        );
     }
 }
 
@@ -63,7 +67,7 @@ export const MSYS2_EXTRA = ["mesa", "imagemagick"];
 
 // The march the final clang/lld is built for; its PGO context-sensitive stage matches it.
 const LLVM_MARCH = "znver1",
-    LLVM_TAG = "llvmorg-23.1.5",
+    LLVM_TAG = "llvmorg-23.1.6",
     LLVM_MAJOR = LLVM_TAG.replace(/^llvmorg-/, "").split(".")[0]!;
 
 // Only the tools I use: everything else (each a slow full-LTO link) is skipped. Symlinks (ld.lld, clang++, ...) come with their target's component.
@@ -107,7 +111,9 @@ const LLVM_TOP_DIST_COMPONENTS = LLVM_DIST_COMPONENTS.split(";")
     .join(";");
 // Empty while the PGO training configures: that build has no runtimes, so LLVM would fail on these. Not in the profile hash (pgo.ts).
 const runtimeDistComponents = () =>
-    settings.pgoTraining && llvmPgo() && !existsSync(settings.llvmProfdata) ? "" : LLVM_RUNTIME_DIST_COMPONENTS.join(";");
+    settings.pgoTraining && llvmPgo() && !existsSync(settings.llvmProfdata)
+        ? ""
+        : LLVM_RUNTIME_DIST_COMPONENTS.join(";");
 
 const llvmArgs = () =>
     `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBOMP_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
@@ -734,7 +740,9 @@ export const LIBRARIES: Library[] = [
                 await $`sd -s "if(NOT CMAKE_HOST_WIN32 OR CYGWIN OR MINGW)" "if(CMAKE_HOST_WIN32 OR CYGWIN OR MINGW)" CMakeLists.txt`.cwd(
                     path,
                 );
-                await $`sd -s "if(NOT WIN32 OR CYGWIN OR MINGW)" "if(WIN32 OR CYGWIN OR MINGW)" CMakeLists.txt`.cwd(path);
+                await $`sd -s "if(NOT WIN32 OR CYGWIN OR MINGW)" "if(WIN32 OR CYGWIN OR MINGW)" CMakeLists.txt`.cwd(
+                    path,
+                );
             }
             // Drops libpng's check that zlib.h's ZLIB_VERNUM matches the one it was configured with; zlib-ng is API-compatible, so the check only breaks the build.
             await $`sd -s -- "#  error The include path of <zlib.h> is incorrect" "" pngpriv.h`.cwd(path);
@@ -1016,7 +1024,8 @@ export const LIBRARIES: Library[] = [
         source: { git: "https://github.com/google/libultrahdr", tag: "v2.0.2" },
         profile: { rtti: true },
         msys2: "libultrahdr",
-        args: () => `-DUHDR_BUILD_EXAMPLES=OFF -DUHDR_ENABLE_INTRINSICS=ON -DUHDR_ENABLE_GLES=OFF -DUHDR_ENABLE_HEIF=OFF`,
+        args: () =>
+            `-DUHDR_BUILD_EXAMPLES=OFF -DUHDR_ENABLE_INTRINSICS=ON -DUHDR_ENABLE_GLES=OFF -DUHDR_ENABLE_HEIF=OFF`,
         prepare: async ({ path }) => {
             if (WIN) {
                 await $`sd -s -- ${"if(MSVC AND NOT BUILD_SHARED_LIBS)"} ${"if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)"} CMakeLists.txt`.cwd(
