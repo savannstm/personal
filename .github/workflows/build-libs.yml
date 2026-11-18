@@ -96,7 +96,71 @@ jobs:
                   path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
                   key: pgo-${{ steps.keys.outputs.llvm }}
 
-    build:
+    # llvm-project bootstraps from CLANG64's clang (ownClang: false), so this job's clang is the only one it produces.
+    llvm:
+        name: LLVM
+        needs: pgo
+        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-project') }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+
+            - run: npm ci
+
+            # Resume: restores the installed clang and the build state from the latest earlier run, so a run that hit the 6 h
+            # limit continues where it stopped.
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: llvm-${{ github.run_id }}
+                  restore-keys: llvm-
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.llvm }}
+                  key: pgo-${{ needs.pgo.outputs.llvm }}
+
+            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
+            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+            - name: Update MSYS2
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Build
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo clang,lld --only llvm-project
+
+            - uses: actions/cache/save@v6
+              if: always()
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: llvm-${{ github.run_id }}
+
+            - uses: actions/upload-artifact@v7
+              if: always()
+              with:
+                  name: llvm-${{ github.run_number }}
+                  path: C:/dev-clang
+                  compression-level: 1
+                  retention-days: 14
+                  if-no-files-found: warn
+
+    # Runs parallel to llvm. It never restores C:/dev-clang, so its libraries use CLANG64's clang (ownClang is set by
+    # the presence of C:/dev-clang/bin/clang.exe) and not the clang this pipeline builds.
+    libs:
+        name: Libraries
         needs: pgo
         runs-on: windows-2025
         env:
@@ -111,26 +175,22 @@ jobs:
             - run: npm ci
 
             # Resume: restores the installed libraries and the build state (which libraries are done) from the latest earlier run,
-            # so a run that hit the 6 h limit continues where it stopped.
+            # so a run that hit the 6 h limit continues where it stopped. The prefix differs from the llvm job's, and the restore
+            # keys from earlier pipelines that cached a clang here are not matched.
             - uses: actions/cache/restore@v6
               with:
                   path: |
                       C:/dev-clang
                       dev/build-libs/build-state.json
-                  key: libs-${{ github.run_id }}
-                  restore-keys: libs-
+                  key: libs-split-${{ github.run_id }}
+                  restore-keys: libs-split-
 
-            # Exactly the profiles for this build's key. Libraries built with a profile record its content in the build
+            # Exactly the library profile for this build's key. Libraries built with a profile record its content in the build
             # state, so a new profile rebuilds them and an unchanged one doesn't.
             - uses: actions/cache/restore@v6
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.libs }}
                   key: pgo-${{ needs.pgo.outputs.libs }}
-
-            - uses: actions/cache/restore@v6
-              with:
-                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.llvm }}
-                  key: pgo-${{ needs.pgo.outputs.llvm }}
 
             # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
             # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
@@ -156,11 +216,11 @@ jobs:
               with:
                   tool: cargo-c
 
-            # Repos go to C:, the workspace drive only has ~14 GB free.
+            # Repos go to C:, the workspace drive only has ~14 GB free. llvm-project is built by the llvm job.
             - name: Build
               shell: pwsh
               run: |
-                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'clang,lld,libs', '--exclude', 'ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
+                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
                   if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
                   node dev/build-libs/index.ts @buildArgs
 
@@ -170,7 +230,7 @@ jobs:
                   path: |
                       C:/dev-clang
                       dev/build-libs/build-state.json
-                  key: libs-${{ github.run_id }}
+                  key: libs-split-${{ github.run_id }}
 
             - uses: actions/upload-artifact@v7
               if: always()

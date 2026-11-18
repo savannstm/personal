@@ -171,8 +171,12 @@ async function releaseArchives(lib: string, skip: string[] = []): Promise<string
             .map(magickSuffix)
             .filter((suffix) => suffix !== magickSuffix(MAGICK_PGO_VARIANT))
             .map((suffix) => String.raw`\.${suffix}\.`),
-        exclude = new RegExp([...otherVariants, ...skip, String.raw`Magick\+\+`, String.raw`\.dll\.a$`, "OpenCL"].join("|"));
-    return (await readdir(lib)).filter((file) => file.endsWith(".a") && !exclude.test(file)).map((file) => `${lib}/${file}`);
+        exclude = new RegExp(
+            [...otherVariants, ...skip, String.raw`Magick\+\+`, String.raw`\.dll\.a$`, "OpenCL"].join("|"),
+        );
+    return (await readdir(lib))
+        .filter((file) => file.endsWith(".a") && !exclude.test(file))
+        .map((file) => `${lib}/${file}`);
 }
 
 async function fetchDictionaries(): Promise<string[]> {
@@ -180,7 +184,10 @@ async function fetchDictionaries(): Promise<string[]> {
     await mkdir(dir, { recursive: true });
     return Promise.all(
         DICTIONARIES.map(async ({ integrity, url }) => {
-            const out = `${dir}/${url.split("/").pop()!.replace(/\.tgz$/, "")}`;
+            const out = `${dir}/${url
+                .split("/")
+                .pop()!
+                .replace(/\.tgz$/, "")}`;
             if (existsSync(`${out}/package/index.aff`)) {
                 return `${out}/package/index.aff`;
             }
@@ -225,7 +232,11 @@ export async function libsPgo(options: CliOptions) {
 
     if (!settings.pgoTraining || existsSync(profile)) {
         if (!existsSync(profile)) {
-            consola.warn(pc.yellow(`No library profile for this build (${basename(profile)}), building without it. Run with --pgo-train to create one.`));
+            consola.warn(
+                pc.yellow(
+                    `No library profile for this build (${basename(profile)}), building without it. Run with --pgo-train to create one.`,
+                ),
+            );
             return;
         }
         // Rebuilt only when the profile changed (see libsProfileTag). A regular LTO build even in a training run, whose lld training links its bitcode.
@@ -267,7 +278,9 @@ function hash(parts: string[]): string {
 /** Contents of the patch files a library's hooks reference (`${ROOT}/patches/...` paths in their source). */
 async function patchContents(sources: string[]): Promise<string[]> {
     const paths = [...new Set(sources.flatMap((source) => source.match(/patches\/[\w./-]+\.\w+/g) ?? []))].sort();
-    return Promise.all(paths.map(async (path) => `${path}\n${await readFile(`${ROOT}/${path}`, "utf8").catch(() => "")}`));
+    return Promise.all(
+        paths.map(async (path) => `${path}\n${await readFile(`${ROOT}/${path}`, "utf8").catch(() => "")}`),
+    );
 }
 
 /**
@@ -280,7 +293,10 @@ export async function resolvePgoProfiles() {
     const clang = WIN ? `${MSYS2_ROOT}/clang64/bin/clang.exe` : "clang",
         // "unknown" (no matching profile) when CLANG64's clang isn't installed yet: only --gen-toolchains resolves before installing it.
         version = /version (\S+)/.exec(await $`${clang} --version`.noThrow().quiet().text())?.[1] ?? "unknown",
-        shared = [version, ...(await Promise.all(["toolchain.ts", "builders.ts"].map((file) => readFile(`${ROOT}/${file}`, "utf8"))))],
+        shared = [
+            version,
+            ...(await Promise.all(["toolchain.ts", "builders.ts"].map((file) => readFile(`${ROOT}/${file}`, "utf8")))),
+        ],
         describe = async (library: Library) => {
             const hooks = [library.prepare, library.build].map((hook) => String(hook ?? ""));
             return [
@@ -294,7 +310,9 @@ export async function resolvePgoProfiles() {
         };
 
     const libs = LIBRARIES.filter((library) => PGO_LIBRARIES.has(library.name)),
-        trainers = await Promise.all(TRAINERS.map((trainer) => readFile(`${ROOT}/patches/pgo/${trainer.source}`, "utf8")));
+        trainers = await Promise.all(
+            TRAINERS.map((trainer) => readFile(`${ROOT}/patches/pgo/${trainer.source}`, "utf8")),
+        );
     settings.libsProfdata = `${PROFILES_DIR}/libs-${hash([
         ...shared,
         ...(await Promise.all(libs.map(describe))).flat(),
@@ -310,7 +328,14 @@ export async function resolvePgoProfiles() {
     settings.llvmProfdata = `${PROFILES_DIR}/llvm-${targets}-${hash([
         ...shared,
         // Its args point at the profile itself once that exists.
-        ...(await describe(llvm)).map((part) => part.replace(/ -DLLVM_PROFDATA_FILE=\S+/, "").replace(/ -DLLVM_DISTRIBUTION_COMPONENTS="[^"]*" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="[^"]*"/, ` -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"`)),
+        ...(await describe(llvm)).map((part) =>
+            part
+                .replace(/ -DLLVM_PROFDATA_FILE=\S+/, "")
+                .replace(
+                    / -DLLVM_DISTRIBUTION_COMPONENTS="[^"]*" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="[^"]*"/,
+                    ` -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"`,
+                ),
+        ),
         targets,
         String(trainLlvm),
     ])}.profdata`;
@@ -476,7 +501,9 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
         return;
     }
     if (settings.pgo.has("lld") && !existsSync(`${DEV_CLANG}/release/include/ImageMagick-7`)) {
-        throw new Error(`--pgo lld links ImageMagick from ${DEV_CLANG}, which isn't built yet: build the libraries first.`);
+        throw new Error(
+            `--pgo lld links ImageMagick from ${DEV_CLANG}, which isn't built yet: build the libraries first.`,
+        );
     }
     // prepare runs before buildVariants' updateEnv: without this, CFLAGS holds the last library's -fprofile-use, which -fprofile-generate rejects.
     await updateEnv(false);
@@ -499,7 +526,12 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
         tools = withLld ? ["clang", "lld"] : ["clang"];
 
     const buildInstrumented = async (dir: string, flags: string, instrumentArgs: string[], targets: string[]) => {
-        await $`cmake -G Ninja -S ${llvmSrc} -B ${dir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS_RELEASE=${flags} -DCMAKE_CXX_FLAGS_RELEASE=${flags} ${instrumentArgs} ${raw(llvmArgs)} -DLLVM_ENABLE_PROJECTS=${projects} -DLLVM_ENABLE_RUNTIMES= -DLLVM_DISTRIBUTION_COMPONENTS= -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind`.env({ ...process.env, PKG_CONFIG_PATH: `${MSYS2_ROOT}/clang64/lib/pkgconfig;${MSYS2_ROOT}/clang64/share/pkgconfig` });
+        await $`cmake -G Ninja -S ${llvmSrc} -B ${dir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS_RELEASE=${flags} -DCMAKE_CXX_FLAGS_RELEASE=${flags} ${instrumentArgs} ${raw(llvmArgs)} -DLLVM_ENABLE_PROJECTS=${projects} -DLLVM_ENABLE_RUNTIMES= -DLLVM_DISTRIBUTION_COMPONENTS= -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind`.env(
+            {
+                ...process.env,
+                PKG_CONFIG_PATH: `${MSYS2_ROOT}/clang64/lib/pkgconfig;${MSYS2_ROOT}/clang64/share/pkgconfig`,
+            },
+        );
         await $`ninja ${targets}`.cwd(dir);
         if (withLld) {
             // ld.lld is not a ninja target here; the lld binary is what ld.lld symlinks to, and --ld-path needs the ld.lld name.
@@ -600,14 +632,24 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
     const csNameDir = `${LLVM_PGO_DIR}/cs-name`;
     await rm(csNameDir, { force: true, recursive: true });
     await mkdir(csNameDir, { recursive: true });
-    await $`${clang64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`.cwd(csNameDir).env(clang64Env);
+    await $`${clang64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`
+        .cwd(csNameDir)
+        .env(clang64Env);
     await buildInstrumented(
         csInst,
         csCflags,
-        ["-DLLVM_BUILD_INSTRUMENTED=CSIR", `-DLLVM_PROFDATA_FILE=${irProfdata}`, "-DLLVM_ENABLE_LTO=Full", "-DLLVM_PARALLEL_LINK_JOBS=1", `-DCMAKE_EXE_LINKER_FLAGS=${csNameDir}/InstrProfilingNameVar.c.obj`],
+        [
+            "-DLLVM_BUILD_INSTRUMENTED=CSIR",
+            `-DLLVM_PROFDATA_FILE=${irProfdata}`,
+            "-DLLVM_ENABLE_LTO=Full",
+            "-DLLVM_PARALLEL_LINK_JOBS=2",
+            `-DCMAKE_EXE_LINKER_FLAGS=${csNameDir}/InstrProfilingNameVar.c.obj`,
+        ],
         tools,
     );
     await mkdir(PROFILES_DIR, { recursive: true });
-    await $`${instProfdata} merge -output=${settings.llvmProfdata} ${irProfdata} ${await train(csInst, `${csInst}/csprofiles`)}`.env(clang64Env);
+    await $`${instProfdata} merge -output=${settings.llvmProfdata} ${irProfdata} ${await train(csInst, `${csInst}/csprofiles`)}`.env(
+        clang64Env,
+    );
     await removeStaleProfiles(settings.llvmProfdata, "llvm-");
 }

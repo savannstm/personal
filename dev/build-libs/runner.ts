@@ -92,7 +92,13 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
 
     if (
         variants.every((isDebug) =>
-            alreadyBuilt(state, `${library.name}:${isDebug ? "debug" : "release"}`, buildRoot(isDebug), statePin, options),
+            alreadyBuilt(
+                state,
+                `${library.name}:${isDebug ? "debug" : "release"}`,
+                buildRoot(isDebug),
+                statePin,
+                options,
+            ),
         )
     ) {
         return;
@@ -249,7 +255,13 @@ function alreadyBuilt(state: BuildState, key: string, prefix: string, pin: strin
     return !options.force && prefixState.entries[key]?.tag === pin;
 }
 
-async function markBuilt(state: BuildState, key: string, prefix: string, pin: string, toolchain: Toolchain): Promise<void> {
+async function markBuilt(
+    state: BuildState,
+    key: string,
+    prefix: string,
+    pin: string,
+    toolchain: Toolchain,
+): Promise<void> {
     state.prefixes[prefix] ??= { entries: {}, toolchain };
     state.prefixes[prefix].toolchain = toolchain;
     state.prefixes[prefix].entries[key] = { tag: pin };

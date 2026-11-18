@@ -1,7 +1,15 @@
 import $ from "dax";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
 
-import { buildDir, buildRoot, DEBUG_NATIVE, DEBUG_TOOLCHAIN, RELEASE_NATIVE, RELEASE_TOOLCHAIN, WIN } from "./settings.ts";
+import {
+    buildDir,
+    buildRoot,
+    DEBUG_NATIVE,
+    DEBUG_TOOLCHAIN,
+    RELEASE_NATIVE,
+    RELEASE_TOOLCHAIN,
+    WIN,
+} from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import { computeFlags, toolchainState } from "./toolchain.ts";
 import type { Ctx, Library, PlainArgs } from "./types.ts";
@@ -103,7 +111,14 @@ export async function buildAutoconf(
     path: string,
     isDebug: boolean,
     prefix: string,
-    { args = "", configure = "./configure", env = "", libs: passLibs = true, libtool = true, makeEnv = "" }: AutoconfOptions = {},
+    {
+        args = "",
+        configure = "./configure",
+        env = "",
+        libs: passLibs = true,
+        libtool = true,
+        makeEnv = "",
+    }: AutoconfOptions = {},
 ) {
     const msysPath = toMsysPath(path),
         { toolchain, tools } = toolchainState();

@@ -41,9 +41,14 @@ async function rankMirrors(): Promise<string[]> {
             MIRRORS.map(async (mirror) => {
                 try {
                     const start = performance.now(),
-                        res = await fetch(`${mirror}/lastsync`, { headers: HEADERS, signal: AbortSignal.timeout(6000) }),
+                        res = await fetch(`${mirror}/lastsync`, {
+                            headers: HEADERS,
+                            signal: AbortSignal.timeout(6000),
+                        }),
                         sync = Number.parseInt(await res.text(), 10);
-                    return res.ok && Number.isFinite(sync) ? { latency: performance.now() - start, mirror, sync } : null;
+                    return res.ok && Number.isFinite(sync)
+                        ? { latency: performance.now() - start, mirror, sync }
+                        : null;
                 } catch {
                     return null;
                 }
@@ -72,7 +77,7 @@ async function loadRepoDb(mirror: string, repo: string): Promise<Map<string, str
         text = new TextDecoder(),
         versions = new Map<string, string>();
 
-    for (let offset = 0; offset + 512 <= tar.length; ) {
+    for (let offset = 0; offset + 512 <= tar.length;) {
         const name = text.decode(tar.subarray(offset, offset + 100)).split("\0", 1)[0]!;
         if (!name) {
             break;
@@ -109,7 +114,9 @@ async function loadMirrorVersions(): Promise<Map<string, string>> {
             consola.info(`Using Arch mirror ${mirror}`);
             return new Map(dbs.flatMap((db) => [...db]));
         } catch (error) {
-            consola.warn(pc.yellow(`${error instanceof Error ? error.message : String(error)}, trying the next mirror`));
+            consola.warn(
+                pc.yellow(`${error instanceof Error ? error.message : String(error)}, trying the next mirror`),
+            );
         }
     }
     throw new Error("could not read the package databases from any Arch mirror");
