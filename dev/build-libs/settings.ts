@@ -12,6 +12,7 @@ export const VSWHERE = "C:/Program Files (x86)/Microsoft Visual Studio/Installer
 export const DEV_CLANG = "C:/dev-clang"; // the clang target's install prefix, which llvm-project is built against
 export const BUILD_STATE_FILE = `${ROOT}/build-state.json`;
 export const LLVM_PGO_DIR = `${ROOT}/pgo/llvm`;
+export const LLVM_TABLEGEN_DIR = `${ROOT}/tablegen/llvm`;
 export const LIBS_PGO_DIR = `${ROOT}/pgo/libs`;
 // The trained profiles, named after the key of everything they were trained from (see resolvePgoProfiles in pgo.ts).
 export const PROFILES_DIR = `${ROOT}/pgo/profiles`;

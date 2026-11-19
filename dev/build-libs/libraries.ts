@@ -11,6 +11,7 @@ import {
     DEBUG_TOOLCHAIN,
     ICU_DATA_FILTERS,
     LLVM_MINGW_I686,
+    LLVM_TABLEGEN_DIR,
     llvmPgo,
     magickSuffix,
     MSYS2_ROOT,
@@ -62,50 +63,46 @@ const LLVM_MARCH = "znver1",
     LLVM_TAG = "llvmorg-23.1.6",
     LLVM_MAJOR = LLVM_TAG.replace(/^llvmorg-/, "").split(".")[0]!;
 
-export const LLVM_DIST_COMPONENTS = [
+// The binaries. The runtimes (compiler-rt, libc++, libc++abi, libunwind) are the separate llvm-runtimes library.
+const LLVM_DIST_COMPONENTS = [
     "clang",
     "clang-format",
     "clang-resource-headers",
     "clang-scan-deps",
     "clang-tidy",
     "clangd",
-    "compiler-rt",
-    "cxx",
-    "cxx-headers",
-    "cxxabi",
-    "cxxabi-headers",
     "liblldb",
     "lld",
     "lldb",
     "llvm-ar",
+    "llvm-cov",
     "llvm-dlltool",
-    "llvm-mt",
-    "llvm-nm",
     "llvm-objcopy",
     "llvm-objdump",
     "llvm-profdata",
     "llvm-ranlib",
     "llvm-rc",
-    "llvm-readelf",
-    "llvm-readobj",
     "llvm-strip",
     "llvm-symbolizer",
     "llvm-windres",
-    "unwind",
-    "unwind-headers",
 ].join(";");
-const LLVM_RUNTIME_DIST_COMPONENTS = ["cxx-headers", "cxxabi-headers", "unwind-headers"];
-const LLVM_TOP_DIST_COMPONENTS = LLVM_DIST_COMPONENTS.split(";")
-    .filter((component) => !LLVM_RUNTIME_DIST_COMPONENTS.includes(component))
-    .join(";");
-// Empty while the PGO training configures: that build has no runtimes, so LLVM would fail on these. Not in the profile hash (pgo.ts).
-const runtimeDistComponents = () =>
-    settings.pgoTraining && llvmPgo() && !existsSync(settings.llvmProfdata)
-        ? ""
-        : LLVM_RUNTIME_DIST_COMPONENTS.join(";");
 
-const llvmArgs = () =>
-    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_TOP_DIST_COMPONENTS}" -DLLVM_RUNTIME_DISTRIBUTION_COMPONENTS="${runtimeDistComponents()}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
+const llvmArgs = (tablegenBin = "") =>
+    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_NATIVE_TOOL_DIR=${tablegenBin} -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
+
+// The host TableGen tools only run inside the build, so they're built here without -flto=full and reach the main build through LLVM_NATIVE_TOOL_DIR.
+const LLVM_TABLEGEN_BIN = `${LLVM_TABLEGEN_DIR}/bin`,
+    LLVM_TABLEGEN_TOOLS = ["llvm-tblgen", "llvm-min-tblgen", "clang-tblgen", "lldb-tblgen", "clang-tidy-confusable-chars-gen"];
+
+async function buildLlvmTablegen(llvmPath: string) {
+    // -DCMAKE_C_FLAGS=/CXX_FLAGS= clear the CFLAGS env var, which may still hold the previous library's -flto=full (see prepare in pgo.ts).
+    await $`cmake -G Ninja -S ${llvmPath}/llvm -B ${LLVM_TABLEGEN_DIR} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS= -DCMAKE_CXX_FLAGS= ${raw(llvmArgs())} -DLLVM_ENABLE_PROJECTS=${"clang;clang-tools-extra;lldb"} -DLLVM_ENABLE_RUNTIMES= -DLLVM_DISTRIBUTION_COMPONENTS=`.env({
+        ...process.env,
+        LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64`,
+        PKG_CONFIG_PATH: `${MSYS2_ROOT}/clang64/lib/pkgconfig;${MSYS2_ROOT}/clang64/share/pkgconfig`,
+    });
+    await $`ninja ${LLVM_TABLEGEN_TOOLS}`.cwd(LLVM_TABLEGEN_DIR);
+}
 
 const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define HAVE_INTTYPES_H 1
@@ -1060,8 +1057,8 @@ export const LIBRARIES: Library[] = [
             }
         },
         build: async ({ isDebug, msvc, path, root, step }) => {
-            const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, NM, RANLIB, STRIP, WINDRES } = process.env,
-                common = `--target-os=${WIN ? (msvc ? "win64" : "mingw32") : "linux"} --arch=x86_64 --cpu=x86-64-v3 ${msvc ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --nm=${NM} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
+            const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, RANLIB, STRIP, WINDRES } = process.env,
+                common = `--target-os=${WIN ? (msvc ? "win64" : "mingw32") : "linux"} --arch=x86_64 --cpu=x86-64-v3 ${msvc ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
                 buildType = isDebug
                     ? "--disable-optimizations --enable-debug --disable-stripping"
                     : "--enable-optimizations --disable-debug --enable-stripping";
@@ -1190,17 +1187,34 @@ export const LIBRARIES: Library[] = [
         sourceSubdir: "llvm",
         releaseOnly: true,
         // C++20: libc++ makes unique_ptr constexpr in C++23, which breaks LLVM's TableGen Matchers.h (make_unique of an incomplete type).
-        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, rtti: true },
-        args: llvmArgs,
+        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, rtti: true, fatLto: false },
+        args: () => llvmArgs(LLVM_TABLEGEN_BIN),
         // CLANG64's pkg-config resolves libxml2's static deps (iconv, bcrypt, zlib) for LLVM's static libxml2 check.
         env: { LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64` },
         // A training run trains the profile here, before the build that uses it.
-        prepare: ({ path }) => trainLlvm(path, llvmArgs(), LLVM_MAJOR, LLVM_MARCH),
+        prepare: async ({ path }) => {
+            await applyPatch(path, "llvm-argdumper.patch");
+            await buildLlvmTablegen(path);
+            await trainLlvm(path, llvmArgs(LLVM_TABLEGEN_BIN), LLVM_MAJOR, LLVM_MARCH);
+        },
         // The LLVM profile changes the output without changing the pin, so its content is part of the build state too.
         statePin: (pin) =>
-            `${pin}+runtimes${llvmPgo() && existsSync(settings.llvmProfdata) ? `+pgo-${profileHash(settings.llvmProfdata)}` : ""}`,
+            `${pin}${llvmPgo() && existsSync(settings.llvmProfdata) ? `+pgo-${profileHash(settings.llvmProfdata)}` : ""}`,
         // install-distribution builds only LLVM_DIST_COMPONENTS and their dependencies, then installs them.
         cmakeTarget: "install-distribution",
+    },
+    // The runtimes are built apart from llvm-project, with CLANG64's clang: its libraries find the libc++, libunwind and
+    // libomp the sanitizer DLLs link against, which llvm-project's just-built clang can't. Fat LTO objects: consumers
+    // link these libraries, which need native code (compiler-rt builtins) next to the bitcode.
+    {
+        name: "llvm-runtimes",
+        source: { git: "https://github.com/llvm/llvm-project", tag: LLVM_TAG },
+        sourceSubdir: "runtimes",
+        releaseOnly: true,
+        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, rtti: true },
+        args: () =>
+            `-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu`,
+        cmakeTarget: "install",
     },
 ];
 

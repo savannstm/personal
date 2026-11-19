@@ -161,4 +161,8 @@ export async function installToolchainPackages(toolchain: Toolchain) {
         ...[...MSYS2_MINGW_PACKAGES, ...msys2LibraryPackages()].map((p) => `mingw-w64-clang-x86_64-${p}`),
     ].join(" ");
     await bash`pacman -Syuq --needed --noconfirm ${packages}`;
+    // The downloaded packages are ~2 GB the CI runner's disk needs for the LLVM build.
+    if (process.env.CI) {
+        await bash`pacman -Scc --noconfirm`;
+    }
 }

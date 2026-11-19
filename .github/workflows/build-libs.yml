@@ -96,7 +96,8 @@ jobs:
                   path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
                   key: pgo-${{ steps.keys.outputs.llvm }}
 
-    # llvm-project bootstraps from CLANG64's clang (ownClang: false), so this job's clang is the only one it produces.
+    # The LLVM binaries (clang, lld, lldb, tools), bootstrapped from CLANG64's clang (ownClang: false). Plain -flto=full objects, no
+    # fat ones: they only get linked into executables. The runtimes are built by the llvm-runtimes job.
     llvm:
         name: LLVM
         needs: pgo
@@ -118,8 +119,8 @@ jobs:
                   path: |
                       C:/dev-clang
                       dev/build-libs/build-state.json
-                  key: llvm-${{ github.run_id }}
-                  restore-keys: llvm-
+                  key: llvm-bin-${{ github.run_id }}
+                  restore-keys: llvm-bin-
 
             - uses: actions/cache/restore@v6
               with:
@@ -146,18 +147,74 @@ jobs:
                   path: |
                       C:/dev-clang
                       dev/build-libs/build-state.json
-                  key: llvm-${{ github.run_id }}
+                  key: llvm-bin-${{ github.run_id }}
 
             - uses: actions/upload-artifact@v7
               if: always()
               with:
-                  name: llvm-${{ github.run_number }}
+                  name: llvm-bin-${{ github.run_number }}
                   path: C:/dev-clang
-                  compression-level: 1
+                  compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn
 
-    # Runs parallel to llvm. It never restores C:/dev-clang, so its libraries use CLANG64's clang (ownClang is set by
+    # compiler-rt, libc++, libc++abi and libunwind, built with CLANG64's clang (see the llvm-runtimes record in libraries.ts). Installs into the
+    # same C:/dev-clang layout as the llvm job; unpack both artifacts into one directory.
+    llvm-runtimes:
+        name: LLVM runtimes
+        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-runtimes') }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+
+            - run: npm ci
+
+            # Resume: restores the installed clang and the build state from the latest earlier run, so a run that hit the 6 h
+            # limit continues where it stopped.
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: llvm-rt-${{ github.run_id }}
+                  restore-keys: llvm-rt-
+
+            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
+            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+            - name: Update MSYS2
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Build
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo off --only llvm-runtimes
+
+            - uses: actions/cache/save@v6
+              if: always()
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: llvm-rt-${{ github.run_id }}
+
+            - uses: actions/upload-artifact@v7
+              if: always()
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
+                  compression-level: 9
+                  retention-days: 14
+                  if-no-files-found: warn
+
+    # Runs parallel to the llvm jobs. It never restores C:/dev-clang, so its libraries use CLANG64's clang (ownClang is set by
     # the presence of C:/dev-clang/bin/clang.exe) and not the clang this pipeline builds.
     libs:
         name: Libraries
@@ -220,7 +277,7 @@ jobs:
             - name: Build
               shell: pwsh
               run: |
-                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
+                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,llvm-runtimes,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
                   if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
                   node dev/build-libs/index.ts @buildArgs
 
@@ -237,6 +294,6 @@ jobs:
               with:
                   name: libs-${{ github.run_number }}
                   path: C:/dev-clang
-                  compression-level: 1
+                  compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn

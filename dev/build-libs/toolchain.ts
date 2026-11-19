@@ -35,11 +35,9 @@ const TOOL_VARS: [string, keyof Tools][] = [
     ["CMAKE_RANLIB", "ranlib"],
     ["CMAKE_C_COMPILER_RANLIB", "ranlib"],
     ["CMAKE_CXX_COMPILER_RANLIB", "ranlib"],
-    ["CMAKE_NM", "nm"],
     ["CMAKE_STRIP", "strip"],
     ["CMAKE_OBJCOPY", "objcopy"],
     ["CMAKE_OBJDUMP", "objdump"],
-    ["CMAKE_READELF", "readelf"],
     ["CMAKE_ADDR2LINE", "addr2line"],
 ];
 
@@ -50,7 +48,6 @@ const INI_BINARIES: [string, keyof Tools][] = [
     ["ranlib", "ranlib"],
     ["strip", "strip"],
     ["objcopy", "objcopy"],
-    ["nm", "nm"],
 ];
 
 export const TOOLCHAINS: readonly Toolchain[] = ["clang", "msvc"];
@@ -170,7 +167,6 @@ export async function updateEnv(isDebug: boolean) {
         LD: tools.cc,
         LDFLAGS: `${ldFlags} -L${root}/lib ${includeFlags}`,
         LIBRARY_PATH: dedupPath(`${root}/lib${SEP}${dropInactiveRoot(process.env.LIBRARY_PATH, inactiveRoot)}`, SEP),
-        NM: tools.nm,
         OBJCOPY: tools.objcopy,
         OBJDUMP: tools.objdump,
         PKG_CONFIG_PATH: pkgConfPath,
@@ -347,7 +343,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     // Profiling builds skip LTO, so the training runs measure what they were instrumented for.
     const commonOptFlags = [
         ...RELEASE_NON_LTO_CFLAGS,
-        ...(settings.pgoTraining ? [] : ["-flto=full", "-ffat-lto-objects"]),
+        ...(settings.pgoTraining ? [] : ["-flto=full", ...(profile.fatLto === false ? [] : ["-ffat-lto-objects"])]),
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
     ];
@@ -359,7 +355,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       ...RELEASE_NON_LTO_MSVC_LINKER_FLAGS,
                       // The MSVC driver doesn't forward -ffat-lto-objects to lld-link (the MinGW/ELF ones pass --fat-lto-objects),
                       // and without it lld-link links the objects' machine code instead of LTOing their bitcode.
-                      ...(settings.pgoTraining ? [] : ["-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3", "-Wl,-fat-lto-objects"]),
+                      ...(settings.pgoTraining ? [] : ["-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3", ...(profile.fatLto === false ? [] : ["-Wl,-fat-lto-objects"])]),
                   ]
                 : [...RELEASE_NON_LTO_LINKER_FLAGS, ...(settings.pgoTraining ? [] : ["-Wl,--lto-O3"])];
 
@@ -459,12 +455,10 @@ function getTools(toolchain: Toolchain): Tools {
         cc: "clang",
         cxx: "clang++",
         dlltool: WIN ? "llvm-dlltool" : null,
-        nm: "llvm-nm",
         objcopy: "llvm-objcopy",
         objdump: "llvm-objdump",
         ranlib: "llvm-ranlib",
         rc: WIN ? (toolchain === "msvc" ? "llvm-rc" : "llvm-windres") : null,
-        readelf: "llvm-readelf",
         strip: "llvm-strip",
     };
 }

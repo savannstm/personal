@@ -25,6 +25,7 @@ export interface ToolchainProfile {
     mtune?: string;
     pgo?: boolean; // false: built plain during the library PGO passes (default true)
     linkLibsProfile?: boolean; // release links apply the library profile's context-sensitive part (consumer toolchain files)
+    fatLto?: boolean; // false: -flto=full objects without -ffat-lto-objects, for what is only ever linked into executables (default true)
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
 }
 
@@ -86,12 +87,10 @@ export interface Tools {
     cc: string;
     cxx: string;
     dlltool: null | string;
-    nm: string;
     objcopy: string;
     objdump: string;
     ranlib: string;
     rc: null | string;
-    readelf: string;
     strip: string;
 }
 
