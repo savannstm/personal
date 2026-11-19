@@ -28,6 +28,7 @@ export interface ToolchainProfile {
     fatLto?: boolean; // false: -flto=full objects without -ffat-lto-objects, for what is only ever linked into executables (default true)
     ownLibcxx?: boolean; // true: builds libc++ itself, so no libc++ include directory is added
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
+    compilerRt?: boolean; // true: link with compiler-rt and libunwind, not libgcc (CLANG64 ships no libgcc)
 }
 
 /** What a library's hooks get: one variant (debug or release) of one checkout. */

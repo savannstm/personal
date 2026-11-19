@@ -427,6 +427,11 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
         ldflags.push(`--sysroot=${clang64}`, `-L${buildRoot(false)}/lib`);
     }
 
+    if (profile.compilerRt) {
+        cflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
+        ldflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
+    }
+
     if (WIN) {
         const target = resolveWinTarget(toolchain);
         cflags.push(`--target=${target}`);
