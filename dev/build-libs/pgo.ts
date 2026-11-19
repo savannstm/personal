@@ -558,7 +558,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
 
         if (settings.pgo.has("clang")) {
             await rm(trainDir, { force: true, recursive: true });
-            await $`cmake -G Ninja -S ${llvmSrc} -B ${trainDir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${`${dir}/bin/clang.exe`} -DCMAKE_CXX_COMPILER=${`${dir}/bin/clang++.exe`} -DLLVM_ENABLE_LIBCXX=ON -DLLVM_ENABLE_PROJECTS=clang -DLLVM_TARGETS_TO_BUILD=Native -DCMAKE_C_FLAGS=${trainCFlags} -DCMAKE_CXX_FLAGS=${trainCxxFlags} -DCMAKE_C_FLAGS_RELEASE=${`${cflags} ${trainCFlags}`} -DCMAKE_CXX_FLAGS_RELEASE=${`${cflags} ${trainCxxFlags}`} -DCMAKE_EXE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_SHARED_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_MODULE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`}`;
+            await $`cmake -G Ninja -S ${llvmSrc} -B ${trainDir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${`${dir}/bin/clang.exe`} -DCMAKE_CXX_COMPILER=${`${dir}/bin/clang++.exe`} -DLLVM_ENABLE_LIBCXX=ON -DLLVM_ENABLE_PROJECTS=clang -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_UTILS=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_INCLUDE_TESTS=OFF -DLLVM_TARGETS_TO_BUILD=Native -DCMAKE_C_FLAGS=${trainCFlags} -DCMAKE_CXX_FLAGS=${trainCxxFlags} -DCMAKE_C_FLAGS_RELEASE=${`${cflags} ${trainCFlags}`} -DCMAKE_CXX_FLAGS_RELEASE=${`${cflags} ${trainCxxFlags}`} -DCMAKE_EXE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_SHARED_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_MODULE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`}`;
         }
 
         // Building the instrumented tools and configuring with them writes profiles that aren't representative; drop them before training.

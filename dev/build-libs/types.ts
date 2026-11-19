@@ -26,6 +26,7 @@ export interface ToolchainProfile {
     pgo?: boolean; // false: built plain during the library PGO passes (default true)
     linkLibsProfile?: boolean; // release links apply the library profile's context-sensitive part (consumer toolchain files)
     fatLto?: boolean; // false: -flto=full objects without -ffat-lto-objects, for what is only ever linked into executables (default true)
+    ownLibcxx?: boolean; // true: builds libc++ itself, so no libc++ include directory is added
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
 }
 

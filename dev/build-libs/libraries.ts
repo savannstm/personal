@@ -1,7 +1,7 @@
 import consola from "consola";
 import $ from "dax";
 import { existsSync } from "node:fs";
-import { appendFile, cp, writeFile } from "node:fs/promises";
+import { appendFile, cp, readdir, rm, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
 import { buildAutoconf, buildPlain, cmakeVal, copyLib, movePdbs, stripDllImport } from "./builders.ts";
@@ -22,6 +22,35 @@ import {
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
+
+// Tests are most of the checkout (llvm/test alone is 1.1 GB) and the builds turn them and the docs off.
+const LLVM_UNUSED_DIRS = [
+    "llvm/docs",
+    "clang/docs",
+    "clang-tools-extra/docs",
+    "lld/docs",
+    "lldb/docs",
+    "llvm/test",
+    "llvm/unittests",
+    "clang/test",
+    "clang/unittests",
+    "clang-tools-extra/test",
+    "clang-tools-extra/unittests",
+    "lld/test",
+    "lld/unittests",
+    "lldb/test",
+    "lldb/unittests",
+];
+
+/** Deletes everything of the checkout but `keep` (top-level directories), the tests and the docs. Runs in prepare, after the `git reset --hard` that restores them. */
+async function pruneLlvmSources(path: string, keep: string[]): Promise<void> {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+        if (entry.isDirectory() && entry.name !== ".git" && !keep.includes(entry.name)) {
+            await rm(`${path}/${entry.name}`, { force: true, recursive: true });
+        }
+    }
+    await Promise.all(LLVM_UNUSED_DIRS.map((dir) => rm(`${path}/${dir}`, { force: true, recursive: true })));
+}
 
 // A patch that no longer applies (the source moved on) warns and the build continues, instead of throwing.
 async function applyPatch(path: string, patch: string): Promise<void> {
@@ -88,7 +117,7 @@ const LLVM_DIST_COMPONENTS = [
 ].join(";");
 
 const llvmArgs = (tablegenBin = "") =>
-    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_NATIVE_TOOL_DIR=${tablegenBin} -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
+    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_UTILS=OFF -DLLVM_ENABLE_BINDINGS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_NATIVE_TOOL_DIR=${tablegenBin} -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
 
 // The host TableGen tools only run inside the build, so they're built here without -flto=full and reach the main build through LLVM_NATIVE_TOOL_DIR.
 const LLVM_TABLEGEN_BIN = `${LLVM_TABLEGEN_DIR}/bin`,
@@ -1194,6 +1223,9 @@ export const LIBRARIES: Library[] = [
         // A training run trains the profile here, before the build that uses it.
         prepare: async ({ path }) => {
             await applyPatch(path, "llvm-argdumper.patch");
+            await pruneLlvmSources(path, ["clang", "clang-tools-extra", "cmake", "libc", "lld", "lldb", "llvm", "third-party"]);
+            // lld and lldb add their docs directory without an option to turn it off.
+            await $`sd -s "add_subdirectory(docs)" "" lld/CMakeLists.txt lldb/CMakeLists.txt`.cwd(path);
             await buildLlvmTablegen(path);
             await trainLlvm(path, llvmArgs(LLVM_TABLEGEN_BIN), LLVM_MAJOR, LLVM_MARCH);
         },
@@ -1211,9 +1243,11 @@ export const LIBRARIES: Library[] = [
         source: { git: "https://github.com/llvm/llvm-project", tag: LLVM_TAG },
         sourceSubdir: "runtimes",
         releaseOnly: true,
-        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, rtti: true },
+        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, ownLibcxx: true, rtti: true },
         args: () =>
             `-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu`,
+        prepare: ({ path }) =>
+            pruneLlvmSources(path, ["cmake", "compiler-rt", "libc", "libcxx", "libcxxabi", "libunwind", "llvm", "runtimes", "third-party"]),
         cmakeTarget: "install",
     },
 ];
@@ -1260,24 +1294,26 @@ async function buildRuby(p: string, name: string) {
 
     if (name === "ruby-1.8.1") {
         // mingw's sys/time.h already defines `struct timezone` (guarded by _TIMEZONE_DEFINED); Ruby's win32.h redefines it.
-        await bash`cd ${toMsysPath(p)} && perl -0pi -e 's/#ifdef __MINGW32__\\nstruct timezone \\{/#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\\n#define _TIMEZONE_DEFINED\\nstruct timezone {/; s/gettimeofday\\(struct timeval \\*, struct timezone \\*\\)/gettimeofday(struct timeval *, void *)/' win32/win32.h && perl -pi -e 's/^gettimeofday\\(struct timeval \\*tv, struct timezone \\*tz\\)/gettimeofday(struct timeval *tv, void *tz)/' win32/win32.c`;
+        await $`sd -s '#ifdef __MINGW32__\nstruct timezone {' '#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\n#define _TIMEZONE_DEFINED\nstruct timezone {' win32/win32.h`.cwd(p);
+        await $`sd -s 'gettimeofday(struct timeval *, struct timezone *)' 'gettimeofday(struct timeval *, void *)' win32/win32.h`.cwd(p);
+        await $`sd -s 'gettimeofday(struct timeval *tv, struct timezone *tz)' 'gettimeofday(struct timeval *tv, void *tz)' win32/win32.c`.cwd(p);
     }
 
     if (name === "ruby-1.8.7") {
         // mingw's time.h defines CLOCK_MONOTONIC/CLOCK_REALTIME and calls `_clock_gettime32`, which msvcrt doesn't export.
-        await bash`cd ${toMsysPath(p)} && perl -pi -e 's/^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$/#if defined($1) \\&\\& !defined(__MINGW32__)/' eval.c`;
+        await $`sd -f m '^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$' '#if defined($1) && !defined(__MINGW32__)' eval.c`.cwd(p);
     }
 
     if (name === "ruby-1.9.2") {
         // MinGW's msvcrt headers have no `struct _stati64`; Ruby's win32.h only maps it by a function-like macro, which
         // leaves the struct tag unresolved. Map it to `_stat64` (MinGW's struct) and keep the wrapper on `_stat64`.
-        await bash`cd ${toMsysPath(p)} && sed -i 's/^#define _stati64(path, st) rb_w32_stati64(path, st)$/#define _stati64 _stat64\\n#define _stat64(path, st) rb_w32_stati64(path, st)/' include/ruby/win32.h`;
+        await $`sd -s '#define _stati64(path, st) rb_w32_stati64(path, st)' '#define _stati64 _stat64\n#define _stat64(path, st) rb_w32_stati64(path, st)' include/ruby/win32.h`.cwd(p);
     }
 
     await bash`cd ${toMsysPath(p)} && ${extraEnv} ./configure --host=${triple} --disable-install-doc --disable-rubygems --with-out-ext='*' --disable-shared --enable-static ${name.startsWith("ruby-1.8") ? "ac_cv_func_clock_gettime=no" : ""} --prefix=${buildRoot(false)}/${name}`;
     if (name === "ruby-1.8.1") {
         // Its GNUmakefile hardcodes `dllwrap --target=... --driver-name=...`, which resolves to llvm-mingw's dlltool shim.
-        await bash`cd ${toMsysPath(p)} && sed -i 's/dllwrap --target=mingw32 --driver-name=[$][(]CC[)]/$(DLLWRAP)/' GNUmakefile`;
+        await $`sd -s 'dllwrap --target=mingw32 --driver-name=$(CC)' '$(DLLWRAP)' GNUmakefile`.cwd(p);
     }
 
     // Extensions can't be built as .so for a static ruby.exe, so zlib (plus stringio, which the research harness needs) is

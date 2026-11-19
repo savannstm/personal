@@ -153,16 +153,17 @@ export async function installToolchainPackages(toolchain: Toolchain) {
 
     if (toolchain === "msvc") {
         await bash`pacman -Syuq --needed --noconfirm ${MSYS2_BASE_PACKAGES.join(" ")} >/dev/null 2>&1`;
-        return;
+    } else {
+        const packages = [
+            ...MSYS2_BASE_PACKAGES,
+            ...[...MSYS2_MINGW_PACKAGES, ...msys2LibraryPackages()].map((p) => `mingw-w64-clang-x86_64-${p}`),
+        ].join(" ");
+        await bash`pacman -Syuq --needed --noconfirm ${packages}`;
     }
 
-    const packages = [
-        ...MSYS2_BASE_PACKAGES,
-        ...[...MSYS2_MINGW_PACKAGES, ...msys2LibraryPackages()].map((p) => `mingw-w64-clang-x86_64-${p}`),
-    ].join(" ");
-    await bash`pacman -Syuq --needed --noconfirm ${packages}`;
-    // The downloaded packages are ~2 GB the CI runner's disk needs for the LLVM build.
+    // The downloaded packages are ~2 GB the CI runner's disk needs for the builds. Not `pacman -Scc --noconfirm`: with
+    // --noconfirm it answers "remove ALL files from cache?" with its default, no.
     if (process.env.CI) {
-        await bash`pacman -Scc --noconfirm`;
+        await bash`rm -rf /var/cache/pacman/pkg/*`;
     }
 }

@@ -43,6 +43,7 @@ jobs:
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # Installs the toolchain packages first (the keys include CLANG64's clang version), hence the filter.
             - name: Profile keys
@@ -135,6 +136,7 @@ jobs:
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
@@ -191,6 +193,7 @@ jobs:
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
@@ -257,6 +260,7 @@ jobs:
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,
             # rust-src and the gnullvm target. The config's build dir is a path on the author's machine.

@@ -57,7 +57,8 @@ export function isToolchain(value: string): value is Toolchain {
 }
 
 let current: Conf | null = null,
-    cxxStd = CXX_STD;
+    cxxStd = CXX_STD,
+    ownLibcxx = false;
 
 export const DEFAULT_PROFILE: ToolchainProfile = { asan: false, debugOpt: true, rtti: false };
 
@@ -66,6 +67,7 @@ export const CONSUMER_PROFILE: ToolchainProfile = { asan: false, debugOpt: false
 
 export async function configureToolchain(options: CliOptions, profile: ToolchainProfile = DEFAULT_PROFILE): Promise<Conf> {
     cxxStd = profile.cxxStd ?? CXX_STD;
+    ownLibcxx = profile.ownLibcxx === true;
     current = await genToolchains(options, profile);
     return current;
 }
@@ -87,8 +89,9 @@ export async function computeFlags(isDebug: boolean) {
     // Native Windows pkgconf splits on ';'; with ':' the "D:/..." paths are cut apart and it falls back to MSYS2's .pc files.
     const pkgconfPaths = `${root}/lib/pkgconfig${SEP}${root}/share/pkgconfig`;
 
+    // ownLibcxx: libc++ is being built, and a second copy of its headers would make the wrappers (string.h) include_next into an empty one.
     // Pkg-config's include dirs are -isystem and would otherwise land ahead of the libc++ headers, so the libc++ dir goes first.
-    const libcxx = flags.toolchain === "msvc" ? "" : `-isystem ${flags.ownClang ? buildRoot(false) : `${MSYS2_ROOT}/clang64`}/include/c++/v1`,
+    const libcxx = flags.toolchain === "msvc" || ownLibcxx ? "" : `-isystem ${flags.ownClang ? buildRoot(false) : `${MSYS2_ROOT}/clang64`}/include/c++/v1`,
         cFlags = `-std=gnu17 ${opt}`,
         cxxFlags = `-std=gnu++${cxxStd} ${libcxx} ${opt}`,
         includeFlags = (
