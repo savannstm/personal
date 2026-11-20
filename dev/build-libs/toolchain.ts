@@ -212,7 +212,9 @@ async function genToolchains(options: CliOptions, profile: ToolchainProfile): Pr
         shared = buildShared(options.toolchain, profile, ownClang, ownRuntimes),
         debug = buildDebug(options, shared, profile),
         release = buildRelease(options, shared, profile),
-        tools = getTools(options.toolchain);
+        tools = getTools(options.toolchain),
+        // The files left for the user's projects name the user's LLVM; the builds' own files use the clang on PATH.
+        fileTools = profile === CONSUMER_PROFILE && WIN ? getTools(options.toolchain, LLVM_ROOT) : tools;
 
     await mkdir(TOOLCHAINS_DIR, { recursive: true });
 
@@ -221,10 +223,10 @@ async function genToolchains(options: CliOptions, profile: ToolchainProfile): Pr
         : createTargets("libbz2.a", "liblzma.a", "libdeflate.a", "libzstd.a"));
 
     await Promise.all([
-        writeFile(DEBUG_NATIVE, toIni(debug, tools)),
-        writeFile(RELEASE_NATIVE, toIni(release, tools)),
-        writeFile(DEBUG_TOOLCHAIN, toCmakeToolchain(debug, tools)),
-        writeFile(RELEASE_TOOLCHAIN, toCmakeToolchain(release, tools)),
+        writeFile(DEBUG_NATIVE, toIni(debug, fileTools)),
+        writeFile(RELEASE_NATIVE, toIni(release, fileTools)),
+        writeFile(DEBUG_TOOLCHAIN, toCmakeToolchain(debug, fileTools)),
+        writeFile(RELEASE_TOOLCHAIN, toCmakeToolchain(release, fileTools)),
         ...(WIN
             ? [writeFile(DEBUG_FFMPEG_ROOT, toFfmpegRoot(debug)), writeFile(RELEASE_FFMPEG_ROOT, toFfmpegRoot(release))]
             : []),
@@ -470,8 +472,9 @@ function cq(s: string): string {
     return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function getTools(toolchain: Toolchain): Tools {
-    const bin = (tool: string) => (WIN ? `${LLVM_ROOT}/bin/${tool}.exe` : tool);
+/** The LLVM tools by name, found on PATH; with `root` (Windows), by their path under it. */
+function getTools(toolchain: Toolchain, root?: string): Tools {
+    const bin = (tool: string) => (root ? `${root}/bin/${tool}.exe` : tool);
     return {
         addr2line: bin("llvm-addr2line"),
         ar: bin("llvm-ar"),

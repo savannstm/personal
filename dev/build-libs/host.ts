@@ -10,7 +10,7 @@ import {
 } from "../../personal/install-tools/toolchain.ts";
 import { LIBRARIES, MSYS2_EXTRA } from "./libraries.ts";
 import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
-import { CLANG64, LLVM_ROOT, VSWHERE, WIN } from "./settings.ts";
+import { CLANG64, MSVC_LLVM_ROOT, VSWHERE, WIN } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { Toolchain } from "./types.ts";
 
@@ -44,7 +44,7 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
 
     switch (toolchain) {
         case "clang": {
-            process.env.PATH = `${LLVM_ROOT}/bin;${CLANG64}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
+            process.env.PATH = `${CLANG64}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
             process.env.MSYSTEM = "CLANG64";
             break;
         }
@@ -55,15 +55,15 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
                 [msvcRoot, sdkVersion, clangVersion] = await Promise.all([
                     msvcToolsRoot(),
                     latestVersionDir(`${sdkBase}/Include`),
-                    latestVersionDir(`${LLVM_ROOT}/lib/clang`),
+                    latestVersionDir(`${MSVC_LLVM_ROOT}/lib/clang`),
                 ]),
                 msvcBin = `${msvcRoot}/bin/${HOST_ARCH}/${TARGET_ARCH}`,
                 sdkBin = `${sdkBase}/bin/${sdkVersion}/${TARGET_ARCH}`;
 
             process.env.PATH = composePath(
                 [
-                    `${LLVM_ROOT}/bin`,
-                    `${LLVM_ROOT}/lib/clang/${clangVersion}/lib/windows`,
+                    `${MSVC_LLVM_ROOT}/bin`,
+                    `${MSVC_LLVM_ROOT}/lib/clang/${clangVersion}/lib/windows`,
                     msvcBin,
                     sdkBin,
                     ...toolDirs("msvc"),
