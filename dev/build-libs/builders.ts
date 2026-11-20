@@ -1,6 +1,7 @@
 import $ from "dax";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
 
+import { compareVersions } from "./check-updates.ts";
 import {
     buildDir,
     buildRoot,
@@ -8,6 +9,7 @@ import {
     DEBUG_TOOLCHAIN,
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
+    VSWHERE,
     WIN,
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
@@ -35,13 +37,30 @@ export async function stripDllImport(file: string): Promise<void> {
     await $`sd -s -- "__declspec(dllimport)" "" ${file}`;
 }
 
+// CLANG64 ships no MASM, which openmp's Windows assembly needs: the newest MSVC 64-bit host tools (ml64) provide it.
+async function msvcHostBin(): Promise<string> {
+    const vsRoot = (
+        await $`${VSWHERE} -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`.text()
+    ).trim();
+    const msvcToolsDir = `${vsRoot}/VC/Tools/MSVC`,
+        versions = await readdir(msvcToolsDir);
+    versions.sort(compareVersions);
+    return `${msvcToolsDir}/${versions.at(-1)}/bin/Hostx64/x64`;
+}
+
 export async function buildCMake(library: Library, ctx: Ctx) {
     const { isDebug, path } = ctx,
         cwd = library.sourceSubdir ? `${path}/${library.sourceSubdir}` : path,
         dir = buildDir(isDebug),
         toolchainFile = isDebug ? DEBUG_TOOLCHAIN : RELEASE_TOOLCHAIN;
-    const env = { ...process.env, ...library.env };
-    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}`
+    const env = { ...process.env, ...library.env },
+        msvcBin = library.msvcTools ? await msvcHostBin() : null;
+    if (msvcBin) {
+        env.PATH = `${msvcBin};${process.env.PATH ?? ""}`;
+    }
+    // CMake's ASM_MASM looks for a bare `ml`, which the 64-bit host dir doesn't provide; the x64 target's MASM file needs ml64.
+    const masm = msvcBin ? ` -DCMAKE_ASM_MASM_COMPILER="${msvcBin}/ml64.exe"` : "";
+    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}${raw(masm)}`
         .cwd(cwd)
         .env(env);
     if (library.cmakeTarget) {

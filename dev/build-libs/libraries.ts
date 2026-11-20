@@ -1256,6 +1256,7 @@ export const LIBRARIES: Library[] = [
             await pruneLlvmSources(path, ["cmake", "compiler-rt", "libc", "libcxx", "libcxxabi", "libunwind", "llvm", "openmp", "runtimes", "third-party"]);
         },
         cmakeTarget: "install",
+        msvcTools: true,
     },
 ];
 

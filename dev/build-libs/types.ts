@@ -70,6 +70,8 @@ export interface Library {
     statePin?: (pin: string) => string;
     // CMake: build this target instead of `cmake --build` + `cmake --install`.
     cmakeTarget?: string;
+    // CMake: put the MSVC 64-bit host tools (ml64, for MASM assembly) on PATH for the configure and build.
+    msvcTools?: boolean;
     // Meson: the command to run instead of `meson`.
     mesonCommand?: string[];
     // Arch Linux package name to check upstream versions against (see check-updates.ts). Defaults to `name`.

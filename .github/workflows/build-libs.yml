@@ -195,14 +195,6 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
-            # openmp's Windows assembly is MASM, which CLANG64 doesn't ship: put the runner's VS 64-bit host tools (ml64) on PATH.
-            - name: MSVC assembler
-              shell: pwsh
-              run: |
-                  $vsRoot = & "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-                  $msvc = Get-ChildItem "$vsRoot/VC/Tools/MSVC" | Sort-Object { [version]$_.Name } | Select-Object -Last 1
-                  "$($msvc.FullName)/bin/Hostx64/x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
               shell: pwsh
