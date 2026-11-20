@@ -1,5 +1,6 @@
 import consola from "consola";
 import $ from "dax";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, cp, readdir, rm, writeFile } from "node:fs/promises";
 import pc from "picocolors";
@@ -230,6 +231,8 @@ const LIBLTDL_LINUX_CONFIG = `
 #define STDC_HEADERS 1
 #define VERSION "2.4.3a"
 #define error_t int`;
+
+const LLVM_RUNTIMES_ARGS = `-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu`;
 
 export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
@@ -1244,12 +1247,13 @@ export const LIBRARIES: Library[] = [
         sourceSubdir: "runtimes",
         releaseOnly: true,
         profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, ownLibcxx: true, rtti: true, compilerRt: true },
-        args: () =>
-            `-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu`,
+        args: () => LLVM_RUNTIMES_ARGS,
+        // The flags aren't part of the tag, so a changed flag would otherwise leave the restored build as it was.
+        statePin: (pin) => `${pin}+args-${createHash("sha256").update(LLVM_RUNTIMES_ARGS).digest("hex").slice(0, 12)}`,
         prepare: async ({ path }) => {
             // Static libomp on Windows: LLVM refuses LIBOMP_ENABLE_SHARED=OFF there; this is the patch MSYS2 applies for its static llvm-openmp.
             await applyPatch(path, "llvm-openmp-static-windows.patch");
-            await pruneLlvmSources(path, ["cmake", "compiler-rt", "libc", "libcxx", "libcxxabi", "libunwind", "llvm", "runtimes", "third-party"]);
+            await pruneLlvmSources(path, ["cmake", "compiler-rt", "libc", "libcxx", "libcxxabi", "libunwind", "llvm", "openmp", "runtimes", "third-party"]);
         },
         cmakeTarget: "install",
     },

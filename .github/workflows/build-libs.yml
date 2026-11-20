@@ -222,6 +222,8 @@ jobs:
     libs:
         name: Libraries
         needs: pgo
+        # An llvm-runtimes-only run has no libraries to build; without this the job still trains the PGO chain and builds llvm-runtimes.
+        if: ${{ inputs.only == '' || !contains(inputs.only, 'llvm-runtimes') }}
         runs-on: windows-2025
         env:
             INPUT_ONLY: ${{ inputs.only }}
