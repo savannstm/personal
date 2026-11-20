@@ -10,8 +10,6 @@ export interface CliOptions {
     genToolchains: boolean;
     printPgoKeys: boolean;
     toolchain: Toolchain;
-    prefix: null | string;
-    reposRoot: string;
 }
 
 export interface ToolchainProfile {
@@ -26,8 +24,10 @@ export interface ToolchainProfile {
     pgo?: boolean; // false: built plain during the library PGO passes (default true)
     linkLibsProfile?: boolean; // release links apply the library profile's context-sensitive part (consumer toolchain files)
     fatLto?: boolean; // false: -flto=full objects without -ffat-lto-objects, for what is only ever linked into executables (default true)
+    lto?: boolean; // false: no LTO at all, for libraries whose LTO'd bitcode misbehaves when linked into a -flto=full program (default true)
     ownLibcxx?: boolean; // true: builds libc++ itself, so no libc++ include directory is added
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
+    ownRuntimes?: boolean; // true: libc++, libc++abi, libunwind and libomp come from llvm-runtimes' install, once it exists
     compilerRt?: boolean; // true: link with compiler-rt and libunwind, not libgcc (CLANG64 ships no libgcc)
 }
 
@@ -109,6 +109,7 @@ export interface BuildConfig {
     buildType: BuildType;
     cflags: string;
     cmakeBuildType: "Debug" | "Release";
+    cxxStd: string;
     defaultLibrary: "shared" | "static";
     ldflags: string;
     prefix: string;
@@ -116,10 +117,13 @@ export interface BuildConfig {
 }
 
 export interface Conf {
+    cxxStd: string;
     debug: string;
     ldDebug: string;
     ldRelease: string;
     ownClang: boolean;
+    ownLibcxx: boolean;
+    ownRuntimes: boolean;
     release: string;
     toolchain: Toolchain;
     tools: Tools;

@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 export const WIN = process.platform === "win32";
 export const SEP = delimiter;
 export const ROOT = dirname(fileURLToPath(import.meta.url)).replaceAll("\\", "/");
-export const LLVM_ROOT = "C:/PATH/llvm"; // installed by personal/install-tools
+export const LLVM_ROOT = "C:/LLVM"; // the clang the toolchains build with: bin, lib/clang/<major> (compiler-rt)
 export const LLVM_MINGW_I686 = "C:/PATH/llvm-mingw-msvcrt-i686"; // manual install of mstorsjo/llvm-mingw msvcrt-i686, Ruby builds only
 export const MSYS2_ROOT = "C:/msys64";
+export const CLANG64 = `${MSYS2_ROOT}/clang64`; // the clang that bootstraps ours, and the packages used in place of libraries clang doesn't build
+export const CLANG64_PKG_CONFIG = `${CLANG64}/lib/pkgconfig;${CLANG64}/share/pkgconfig`;
+export const WIN_TAR = "C:/Windows/System32/tar.exe"; // the bsdtar bundled with Windows: extracts .zip as well as .tar.*
 export const VSWHERE = "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe";
 export const DEV_CLANG = "C:/dev-clang"; // the clang target's install prefix, which llvm-project is built against
 export const BUILD_STATE_FILE = `${ROOT}/build-state.json`;

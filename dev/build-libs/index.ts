@@ -6,12 +6,12 @@ import { exit } from "node:process";
 import pc from "picocolors";
 
 import { checkLibraryUpdates } from "./check-updates.ts";
-import { installToolchainPackages, setupToolchainEnv, verifyPrerequisites, WINDOWS_ONLY_TOOLCHAINS } from "./host.ts";
+import { installToolchainPackages, setupToolchainEnv, verifyPrerequisites } from "./host.ts";
 import { FFMPEG_VARIANTS, LIBRARIES } from "./libraries.ts";
 import { libsPgo, MAGICK_PGO_VARIANT, resolvePgoProfiles } from "./pgo.ts";
 import { buildRepos } from "./runner.ts";
 import { llvmPgo, magickSuffix, type MagickVariant, PGO_TARGETS, type PgoTarget, settings, WIN } from "./settings.ts";
-import { configureToolchain, CONSUMER_PROFILE, isToolchain, TOOLCHAINS } from "./toolchain.ts";
+import { configureToolchain, CONSUMER_PROFILE, isToolchain, TOOLCHAINS, WINDOWS_ONLY_TOOLCHAINS } from "./toolchain.ts";
 import type { CliOptions } from "./types.ts";
 
 function splitList(value: string | undefined): string[] {
@@ -96,7 +96,6 @@ function parseCliArgs(): CliOptions {
     const toolchain = opts.toolchain as string,
         onlyDebug = Boolean(opts.onlyDebug),
         onlyRelease = Boolean(opts.onlyRelease),
-        prefix = opts.prefix as null | string,
         options: CliOptions = {
             checkLibraryUpdates: Boolean(opts.checkLibraryUpdates),
             exclude: new Set(splitList(opts.skip)),
@@ -106,12 +105,6 @@ function parseCliArgs(): CliOptions {
             only: opts.only ? new Set(splitList(opts.only)) : null,
             onlyDebug,
             onlyRelease,
-            prefix,
-            reposRoot: opts.repos
-                ? resolve(opts.repos as string).replaceAll("\\", "/")
-                : WIN
-                  ? `C:/Repos-${toolchain}`
-                  : settings.reposRoot,
             toolchain: toolchain as CliOptions["toolchain"],
         };
 
@@ -141,13 +134,17 @@ function parseCliArgs(): CliOptions {
         throw new Error(`--pgo-train with libs or lld links ImageMagick ${pgoSuffix}: add ${pgoSuffix.toLowerCase()} to --magick-variants.`);
     }
 
-    if (prefix) {
-        settings.prefix = prefix;
+    if (opts.prefix) {
+        settings.prefix = opts.prefix as string;
     } else if (WIN) {
         settings.prefix = `C:/dev-${toolchain}`;
     }
 
-    settings.reposRoot = options.reposRoot;
+    if (opts.repos) {
+        settings.reposRoot = resolve(opts.repos as string).replaceAll("\\", "/");
+    } else if (WIN) {
+        settings.reposRoot = `C:/Repos-${toolchain}`;
+    }
 
     return options;
 }

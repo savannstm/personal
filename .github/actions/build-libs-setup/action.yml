@@ -1,0 +1,22 @@
+name: Set up build-libs
+description: Node, the npm dependencies and an up-to-date MSYS2 on the Windows runner, after checkout.
+
+runs:
+    using: composite
+    steps:
+        - uses: actions/setup-node@v7
+          with:
+              node-version: 24
+
+        - run: npm ci
+          shell: pwsh
+
+        # index.ts installs the toolchain packages with pacman as well; update the runner's MSYS2 core first, with the
+        # output shown. The first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
+        - name: Update MSYS2
+          shell: pwsh
+          run: |
+              C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+              C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"

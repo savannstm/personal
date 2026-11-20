@@ -14,23 +14,25 @@ import { basename } from "node:path";
 import pc from "picocolors";
 
 import { getPin, LIBRARIES } from "./libraries.ts";
-import { buildRepos, profileOf } from "./runner.ts";
+import { buildRepos } from "./runner.ts";
 import {
+    CLANG64,
+    CLANG64_PKG_CONFIG,
     DEV_CLANG,
     LIBS_PGO_DIR,
     LLVM_PGO_DIR,
     llvmPgo,
     magickSuffix,
     type MagickVariant,
-    MSYS2_ROOT,
     PGO_TARGETS,
     PROFILES_DIR,
     ROOT,
     settings,
     WIN,
+    WIN_TAR,
 } from "./settings.ts";
 import { raw } from "./shell.ts";
-import { configureToolchain, CONSUMER_PROFILE, updateEnv } from "./toolchain.ts";
+import { configureToolchain, CONSUMER_PROFILE, profileOf, updateEnv } from "./toolchain.ts";
 import type { CliOptions, Library } from "./types.ts";
 
 // The ImageMagick variant the magick and lld trainers link; --magick-variants must include it for a training run.
@@ -202,7 +204,7 @@ async function fetchDictionaries(): Promise<string[]> {
             }
             await mkdir(out, { recursive: true });
             await writeFile(`${out}.tgz`, data);
-            await $`"C:/Windows/System32/tar.exe" -xzf ${`${out}.tgz`} -C ${out}`;
+            await $`${WIN_TAR} -xzf ${`${out}.tgz`} -C ${out}`;
             return `${out}/package/index.aff`;
         }),
     );
@@ -290,7 +292,7 @@ async function patchContents(sources: string[]): Promise<string[]> {
  * clang, which trains them. (Once our own clang exists it compiles the libraries, but its version follows the LLVM tag.)
  */
 export async function resolvePgoProfiles() {
-    const clang = WIN ? `${MSYS2_ROOT}/clang64/bin/clang.exe` : "clang",
+    const clang = WIN ? `${CLANG64}/bin/clang.exe` : "clang",
         // "unknown" (no matching profile) when CLANG64's clang isn't installed yet: only --gen-toolchains resolves before installing it.
         version = /version (\S+)/.exec(await $`${clang} --version`.noThrow().quiet().text())?.[1] ?? "unknown",
         shared = [
@@ -522,7 +524,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
         await $`cmake -G Ninja -S ${llvmSrc} -B ${dir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS_RELEASE=${flags} -DCMAKE_CXX_FLAGS_RELEASE=${flags} ${instrumentArgs} ${raw(llvmArgs)} -DLLVM_ENABLE_PROJECTS=${projects} -DLLVM_ENABLE_RUNTIMES= -DLLVM_DISTRIBUTION_COMPONENTS= -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind`.env(
             {
                 ...process.env,
-                PKG_CONFIG_PATH: `${MSYS2_ROOT}/clang64/lib/pkgconfig;${MSYS2_ROOT}/clang64/share/pkgconfig`,
+                PKG_CONFIG_PATH: CLANG64_PKG_CONFIG,
             },
         );
         await $`ninja ${targets}`.cwd(dir);
@@ -534,13 +536,12 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
 
     // The instrumented clang lives outside the CLANG64 prefix, so it needs CLANG64's resource dir, libc++ and compiler-rt/libunwind to link.
     // --sysroot: otherwise its MinGW driver takes the CRT from a gcc found on PATH (the CI runner's C:/mingw64) and mixes it with CLANG64's libs.
-    const clang64 = `${MSYS2_ROOT}/clang64`,
-        resourceDir = `${clang64}/lib/clang/${major}`,
-        trainRuntime = `--sysroot=${clang64} -resource-dir ${resourceDir} -rtlib=compiler-rt --unwindlib=libunwind -L ${clang64}/lib`,
-        trainCFlags = `${trainRuntime} -isystem ${resourceDir}/include -isystem ${clang64}/include`,
-        trainCxxFlags = `${trainRuntime} -stdlib=libc++ -isystem ${clang64}/include/c++/v1 -isystem ${resourceDir}/include -isystem ${clang64}/include`,
+    const resourceDir = `${CLANG64}/lib/clang/${major}`,
+        trainRuntime = `--sysroot=${CLANG64} -resource-dir ${resourceDir} -rtlib=compiler-rt --unwindlib=libunwind -L ${CLANG64}/lib`,
+        trainCFlags = `${trainRuntime} -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
+        trainCxxFlags = `${trainRuntime} -stdlib=libc++ -isystem ${CLANG64}/include/c++/v1 -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
         // The instrumented binaries (llvm-profdata.exe included) need CLANG64's DLLs (libc++, libxml2) on PATH, otherwise they exit with STATUS_DLL_NOT_FOUND.
-        clang64Env = { ...process.env, PATH: `${clang64}/bin;${process.env.PATH ?? ""}` },
+        clang64Env = { ...process.env, PATH: `${CLANG64}/bin;${process.env.PATH ?? ""}` },
         mainCpp = `${lldDir}/main.cpp`,
         magickDefs = [...MAGICK_DEFINES, "-D_MT"];
 
@@ -558,7 +559,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
 
         if (settings.pgo.has("clang")) {
             await rm(trainDir, { force: true, recursive: true });
-            await $`cmake -G Ninja -S ${llvmSrc} -B ${trainDir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${`${dir}/bin/clang.exe`} -DCMAKE_CXX_COMPILER=${`${dir}/bin/clang++.exe`} -DLLVM_ENABLE_LIBCXX=ON -DLLVM_ENABLE_PROJECTS=clang -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_UTILS=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_INCLUDE_TESTS=OFF -DLLVM_TARGETS_TO_BUILD=Native -DCMAKE_C_FLAGS=${trainCFlags} -DCMAKE_CXX_FLAGS=${trainCxxFlags} -DCMAKE_C_FLAGS_RELEASE=${`${cflags} ${trainCFlags}`} -DCMAKE_CXX_FLAGS_RELEASE=${`${cflags} ${trainCxxFlags}`} -DCMAKE_EXE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_SHARED_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_MODULE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`}`;
+            await $`cmake -G Ninja -S ${llvmSrc} -B ${trainDir} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${`${dir}/bin/clang.exe`} -DCMAKE_CXX_COMPILER=${`${dir}/bin/clang++.exe`} -DLLVM_ENABLE_LIBCXX=ON -DLLVM_ENABLE_PROJECTS=clang -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_UTILS=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_INCLUDE_TESTS=OFF -DLLVM_TARGETS_TO_BUILD=Native -DCMAKE_C_FLAGS=${trainCFlags} -DCMAKE_CXX_FLAGS=${trainCxxFlags} -DCMAKE_C_FLAGS_RELEASE=${`${cflags} ${trainCFlags}`} -DCMAKE_CXX_FLAGS_RELEASE=${`${cflags} ${trainCxxFlags}`} -DCMAKE_EXE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_SHARED_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`} -DCMAKE_MODULE_LINKER_FLAGS=${`${trainRuntime} -stdlib=libc++`}`;
         }
 
         // Building the instrumented tools and configuring with them writes profiles that aren't representative; drop them before training.
@@ -603,8 +604,8 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
                     "-fsanitize=address",
                     "-D_DLL",
                     ...magickDefs,
-                    `-I${clang64}/include/ImageMagick-7`,
-                    `-L${clang64}/lib`,
+                    `-I${CLANG64}/include/ImageMagick-7`,
+                    `-L${CLANG64}/lib`,
                     `-lMagickWand-7.${magickSuffix(MAGICK_PGO_VARIANT)}`,
                     "-o",
                     `${lldDir}/debug.exe`,
@@ -625,7 +626,7 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
     const csNameDir = `${LLVM_PGO_DIR}/cs-name`;
     await rm(csNameDir, { force: true, recursive: true });
     await mkdir(csNameDir, { recursive: true });
-    await $`${clang64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`
+    await $`${CLANG64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`
         .cwd(csNameDir)
         .env(clang64Env);
     await buildInstrumented(

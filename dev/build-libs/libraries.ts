@@ -1,70 +1,12 @@
-import consola from "consola";
 import $ from "dax";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { appendFile, cp, readdir, rm, writeFile } from "node:fs/promises";
-import pc from "picocolors";
+import { appendFile, cp, writeFile } from "node:fs/promises";
 
-import { buildAutoconf, buildPlain, cmakeVal, copyLib, movePdbs, stripDllImport } from "./builders.ts";
-import { profileHash, trainLlvm } from "./pgo.ts";
-import {
-    buildRoot,
-    DEBUG_TOOLCHAIN,
-    ICU_DATA_FILTERS,
-    LLVM_MINGW_I686,
-    LLVM_TABLEGEN_DIR,
-    llvmPgo,
-    magickSuffix,
-    MSYS2_ROOT,
-    RELEASE_TOOLCHAIN,
-    ROOT,
-    settings,
-    WIN,
-} from "./settings.ts";
+import { applyPatch, buildAutoconf, buildPlain, cmakeVal, copyLib, movePdbs, stripDllImport } from "./builders.ts";
+import { llvmProject, llvmRuntimes } from "./llvm.ts";
+import { ruby } from "./ruby.ts";
+import { DEBUG_TOOLCHAIN, ICU_DATA_FILTERS, magickSuffix, RELEASE_TOOLCHAIN, ROOT, settings, WIN } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
-
-// Tests are most of the checkout (llvm/test alone is 1.1 GB) and the builds turn them and the docs off.
-const LLVM_UNUSED_DIRS = [
-    "llvm/docs",
-    "clang/docs",
-    "clang-tools-extra/docs",
-    "lld/docs",
-    "lldb/docs",
-    "llvm/test",
-    "llvm/unittests",
-    "clang/test",
-    "clang/unittests",
-    "clang-tools-extra/test",
-    "clang-tools-extra/unittests",
-    "lld/test",
-    "lld/unittests",
-    "lldb/test",
-    "lldb/unittests",
-];
-
-/** Deletes everything of the checkout but `keep` (top-level directories), the tests and the docs. Runs in prepare, after the `git reset --hard` that restores them. */
-async function pruneLlvmSources(path: string, keep: string[]): Promise<void> {
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name !== ".git" && !keep.includes(entry.name)) {
-            await rm(`${path}/${entry.name}`, { force: true, recursive: true });
-        }
-    }
-    await Promise.all(LLVM_UNUSED_DIRS.map((dir) => rm(`${path}/${dir}`, { force: true, recursive: true })));
-}
-
-// A patch that no longer applies (the source moved on) warns and the build continues, instead of throwing.
-async function applyPatch(path: string, patch: string): Promise<void> {
-    try {
-        await $`git apply ${`${ROOT}/patches/${patch}`}`.cwd(path);
-    } catch (error) {
-        consola.warn(
-            pc.yellow(
-                `Patch ${patch} did not apply in ${path}: ${error instanceof Error ? error.message : String(error)}`,
-            ),
-        );
-    }
-}
 
 // FFmpeg variants (--ffmpeg-variants), each installed to `${prefix}/ffmpeg-<name>`. `consumers` are the
 // [CMake PROJECT_NAME, cache variable] pairs that the generated ffmpeg-root-*.cmake points at the variant.
@@ -88,51 +30,6 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
 };
 
 export const MSYS2_EXTRA = ["mesa", "imagemagick"];
-
-const LLVM_MARCH = "znver1",
-    LLVM_TAG = "llvmorg-23.1.6",
-    LLVM_MAJOR = LLVM_TAG.replace(/^llvmorg-/, "").split(".")[0]!;
-
-// The binaries. The runtimes (compiler-rt, libc++, libc++abi, libunwind) are the separate llvm-runtimes library.
-const LLVM_DIST_COMPONENTS = [
-    "clang",
-    "clang-format",
-    "clang-resource-headers",
-    "clang-scan-deps",
-    "clang-tidy",
-    "clangd",
-    "liblldb",
-    "lld",
-    "lldb",
-    "llvm-ar",
-    "llvm-cov",
-    "llvm-dlltool",
-    "llvm-objcopy",
-    "llvm-objdump",
-    "llvm-profdata",
-    "llvm-ranlib",
-    "llvm-rc",
-    "llvm-strip",
-    "llvm-symbolizer",
-    "llvm-windres",
-].join(";");
-
-const llvmArgs = (tablegenBin = "") =>
-    `-DLLVM_ENABLE_LIBCXX=ON -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" -DCLANG_DEFAULT_CXX_STDLIB=libc++ -DCLANG_DEFAULT_RTLIB=compiler-rt -DCLANG_DEFAULT_UNWINDLIB=libunwind -DLLVM_ENABLE_RPMALLOC=ON -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_UTILS=OFF -DLLVM_ENABLE_BINDINGS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_LIBPFM=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_TOOLS_EXTRA_INCLUDE_TESTS=OFF -DLLDB_INCLUDE_TESTS=OFF -DCLANG_BUILD_EXAMPLES=OFF -DCLANG_INCLUDE_DOCS=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_OBJC_REWRITER=OFF -DZLIB_LIBRARY=${MSYS2_ROOT}/clang64/lib/libz.a -DZLIB_INCLUDE_DIR=${MSYS2_ROOT}/clang64/include -DLLVM_USE_STATIC_LIBXML2=ON -DLibXml2_USE_STATIC_LIBS=ON -DLIBXML2_DEFINITIONS=-DLIBXML_STATIC -DLLVM_NATIVE_TOOL_DIR=${tablegenBin} -DLLVM_DISTRIBUTION_COMPONENTS="${LLVM_DIST_COMPONENTS}"${llvmPgo() && existsSync(settings.llvmProfdata) ? ` -DLLVM_PROFDATA_FILE=${settings.llvmProfdata}` : ""}`;
-
-// The host TableGen tools only run inside the build, so they're built here without -flto=full and reach the main build through LLVM_NATIVE_TOOL_DIR.
-const LLVM_TABLEGEN_BIN = `${LLVM_TABLEGEN_DIR}/bin`,
-    LLVM_TABLEGEN_TOOLS = ["llvm-tblgen", "llvm-min-tblgen", "clang-tblgen", "lldb-tblgen", "clang-tidy-confusable-chars-gen"];
-
-async function buildLlvmTablegen(llvmPath: string) {
-    // -DCMAKE_C_FLAGS=/CXX_FLAGS= clear the CFLAGS env var, which may still hold the previous library's -flto=full (see prepare in pgo.ts).
-    await $`cmake -G Ninja -S ${llvmPath}/llvm -B ${LLVM_TABLEGEN_DIR} -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS= -DCMAKE_CXX_FLAGS= ${raw(llvmArgs())} -DLLVM_ENABLE_PROJECTS=${"clang;clang-tools-extra;lldb"} -DLLVM_ENABLE_RUNTIMES= -DLLVM_DISTRIBUTION_COMPONENTS=`.env({
-        ...process.env,
-        LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64`,
-        PKG_CONFIG_PATH: `${MSYS2_ROOT}/clang64/lib/pkgconfig;${MSYS2_ROOT}/clang64/share/pkgconfig`,
-    });
-    await $`ninja ${LLVM_TABLEGEN_TOOLS}`.cwd(LLVM_TABLEGEN_DIR);
-}
 
 const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define HAVE_INTTYPES_H 1
@@ -231,8 +128,6 @@ const LIBLTDL_LINUX_CONFIG = `
 #define STDC_HEADERS 1
 #define VERSION "2.4.3a"
 #define error_t int`;
-
-const LLVM_RUNTIMES_ARGS = `-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
 export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
@@ -1213,145 +1108,9 @@ export const LIBRARIES: Library[] = [
     ruby("ruby-1.9.2", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.2-p330.tar.gz", "1.9.2-p330"),
 
     // --- Last: its lld PGO training links ImageMagick and its libraries ---
-    {
-        name: "llvm-project",
-        source: { git: "https://github.com/llvm/llvm-project", tag: LLVM_TAG },
-        sourceSubdir: "llvm",
-        releaseOnly: true,
-        // C++20: libc++ makes unique_ptr constexpr in C++23, which breaks LLVM's TableGen Matchers.h (make_unique of an incomplete type).
-        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, rtti: true, fatLto: false },
-        args: () => llvmArgs(LLVM_TABLEGEN_BIN),
-        // CLANG64's pkg-config resolves libxml2's static deps (iconv, bcrypt, zlib) for LLVM's static libxml2 check.
-        env: { LLVM_DEPS_PREFIX: `${MSYS2_ROOT}/clang64` },
-        // A training run trains the profile here, before the build that uses it.
-        prepare: async ({ path }) => {
-            await applyPatch(path, "llvm-argdumper.patch");
-            await pruneLlvmSources(path, ["clang", "clang-tools-extra", "cmake", "libc", "lld", "lldb", "llvm", "third-party"]);
-            // lld and lldb add their docs directory without an option to turn it off.
-            await $`sd -s "add_subdirectory(docs)" "" lld/CMakeLists.txt lldb/CMakeLists.txt`.cwd(path);
-            await buildLlvmTablegen(path);
-            await trainLlvm(path, llvmArgs(LLVM_TABLEGEN_BIN), LLVM_MAJOR, LLVM_MARCH);
-        },
-        // The LLVM profile changes the output without changing the pin, so its content is part of the build state too.
-        statePin: (pin) =>
-            `${pin}${llvmPgo() && existsSync(settings.llvmProfdata) ? `+pgo-${profileHash(settings.llvmProfdata)}` : ""}`,
-        // install-distribution builds only LLVM_DIST_COMPONENTS and their dependencies, then installs them.
-        cmakeTarget: "install-distribution",
-    },
-    // The runtimes are built apart from llvm-project, with CLANG64's clang: its libraries find the libc++, libunwind and
-    // libomp the sanitizer DLLs link against, which llvm-project's just-built clang can't. Fat LTO objects: consumers
-    // link these libraries, which need native code (compiler-rt builtins) next to the bitcode.
-    {
-        name: "llvm-runtimes",
-        source: { git: "https://github.com/llvm/llvm-project", tag: LLVM_TAG },
-        sourceSubdir: "runtimes",
-        releaseOnly: true,
-        profile: { cxxStd: "20", debugOpt: false, march: LLVM_MARCH, mtune: LLVM_MARCH, ownClang: false, ownLibcxx: true, rtti: true, compilerRt: true },
-        args: () => LLVM_RUNTIMES_ARGS,
-        // The flags aren't part of the tag, so a changed flag would otherwise leave the restored build as it was.
-        statePin: (pin) => `${pin}+args-${createHash("sha256").update(LLVM_RUNTIMES_ARGS).digest("hex").slice(0, 12)}`,
-        prepare: async ({ path }) => {
-            // Static libomp on Windows: LLVM refuses LIBOMP_ENABLE_SHARED=OFF there; this is the patch MSYS2 applies for its static llvm-openmp.
-            await applyPatch(path, "llvm-openmp-static-windows.patch");
-            await pruneLlvmSources(path, ["cmake", "compiler-rt", "libc", "libcxx", "libcxxabi", "libunwind", "llvm", "openmp", "runtimes", "third-party"]);
-        },
-        cmakeTarget: "install",
-        msvcTools: true,
-    },
+    llvmProject,
+    llvmRuntimes,
 ];
-
-/**
- * Ruby 1.8/1.9 predate 64-bit Windows (their win32 port assumes a 32-bit `long` and MSVCRT internals), so they build
- * with the manually installed llvm-mingw i686 toolchain instead of clang64. Release only, installed to `${prefix}/release/<name>`.
- */
-function ruby(name: string, archive: string, version: string): Library {
-    return {
-        name,
-        source: { archive, subdir: `ruby-${version}`, version },
-        releaseOnly: true,
-        profile: { rtti: true },
-        build: ({ path }) => buildRuby(path, name),
-    };
-}
-
-async function buildRuby(p: string, name: string) {
-    const triple = "i686-w64-mingw32",
-        // Flags that target x86_64 or pull in the clang64 x86_64 runtime and libs; the i686 build must not get them.
-        x64Flag = /^(-march=|-mtune=|--target=|-fopenmp|-static-openmp|-l|-L)/,
-        keep = (flags: string) =>
-            flags
-                .split(" ")
-                .filter((flag) => !x64Flag.test(flag))
-                .join(" "),
-        // x86-64-v3's instruction set, spelled out since -march is rejected for i686 targets.
-        isa = "-mavx -mavx2 -mbmi -mbmi2 -mf16c -mfma -mlzcnt -mmovbe -mpopcnt -msse4.2 -mxsave",
-        // The shell splits PATH on `:`, so the drive letter has to be an MSYS path.
-        bin = toMsysPath(`${LLVM_MINGW_I686}/bin`),
-        // Ruby's C code relies on -fno-strict-aliasing; the -Wno-error flags turn clang 16+ hard errors on its old code back into warnings.
-        // 1.8's `inline` functions (lex.c) need gnu89 inline semantics to get an external definition. file.c includes
-        // fcntl.h (and so sys/stat.h) before config.h sets _FILE_OFFSET_BITS=64, giving it a smaller `struct stat` than
-        // win32.c's rb_w32_stat writes; defining it up front keeps the layout identical.
-        cflags = `${keep(process.env.CFLAGS!)} ${isa} ${name.startsWith("ruby-1.8") ? "-fgnu89-inline -D_FILE_OFFSET_BITS=64" : ""} -fno-strict-aliasing -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int`,
-        ldflags = `${keep(process.env.LDFLAGS!)} ${isa}`;
-
-    // Not buildAutoconf: its MSYS-style --prefix is resolved against the current drive by Ruby's native rbinstall, so the
-    // prefix has to stay a Windows path. `install` depends on the encoding .so files, which can't link against a static
-    // ruby.exe, so only the program and the Ruby libraries are installed.
-    // RUBYOPT is cleared: the host's value (e.g. `-E`) is rejected by the old miniruby while it builds rbconfig.rb.
-    const extraEnv = `RUBYOPT= PATH="${bin}:$PATH" CC=${triple}-clang CXX=${triple}-clang++ AR=${triple}-ar RANLIB=${triple}-ranlib STRIP=${triple}-strip MAKEFLAGS="LDSHARED=true WINDRES=${triple}-windres DLLWRAP=${toMsysPath(`${ROOT}/patches/ruby/dllwrap.sh`)}" CFLAGS="${cflags}" LDFLAGS="${ldflags}"`;
-
-    if (name === "ruby-1.8.1") {
-        // mingw's sys/time.h already defines `struct timezone` (guarded by _TIMEZONE_DEFINED); Ruby's win32.h redefines it.
-        await $`sd -s '#ifdef __MINGW32__\nstruct timezone {' '#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\n#define _TIMEZONE_DEFINED\nstruct timezone {' win32/win32.h`.cwd(p);
-        await $`sd -s 'gettimeofday(struct timeval *, struct timezone *)' 'gettimeofday(struct timeval *, void *)' win32/win32.h`.cwd(p);
-        await $`sd -s 'gettimeofday(struct timeval *tv, struct timezone *tz)' 'gettimeofday(struct timeval *tv, void *tz)' win32/win32.c`.cwd(p);
-    }
-
-    if (name === "ruby-1.8.7") {
-        // mingw's time.h defines CLOCK_MONOTONIC/CLOCK_REALTIME and calls `_clock_gettime32`, which msvcrt doesn't export.
-        await $`sd -f m '^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$' '#if defined($1) && !defined(__MINGW32__)' eval.c`.cwd(p);
-    }
-
-    if (name === "ruby-1.9.2") {
-        // MinGW's msvcrt headers have no `struct _stati64`; Ruby's win32.h only maps it by a function-like macro, which
-        // leaves the struct tag unresolved. Map it to `_stat64` (MinGW's struct) and keep the wrapper on `_stat64`.
-        await $`sd -s '#define _stati64(path, st) rb_w32_stati64(path, st)' '#define _stati64 _stat64\n#define _stat64(path, st) rb_w32_stati64(path, st)' include/ruby/win32.h`.cwd(p);
-    }
-
-    await bash`cd ${toMsysPath(p)} && ${extraEnv} ./configure --host=${triple} --disable-install-doc --disable-rubygems --with-out-ext='*' --disable-shared --enable-static ${name.startsWith("ruby-1.8") ? "ac_cv_func_clock_gettime=no" : ""} --prefix=${buildRoot(false)}/${name}`;
-    if (name === "ruby-1.8.1") {
-        // Its GNUmakefile hardcodes `dllwrap --target=... --driver-name=...`, which resolves to llvm-mingw's dlltool shim.
-        await $`sd -s 'dllwrap --target=mingw32 --driver-name=$(CC)' '$(DLLWRAP)' GNUmakefile`.cwd(p);
-    }
-
-    // Extensions can't be built as .so for a static ruby.exe, so zlib (plus stringio, which the research harness needs) is
-    // compiled into the program: its Init_zlib is registered by an Init_ext that replaces dmyext.o in the archive.
-    // llvm-mingw ships no i686 libz, so build one from the zlib sources.
-    const zlibDir = `${settings.reposRoot}/zlib-i686`,
-        zlibObjs =
-            "adler32 compress crc32 deflate gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil",
-        legacy = name.startsWith("ruby-1.8"),
-        initZlib = legacy
-            ? 'Init_zlib(); rb_provide("zlib.so"); Init_stringio(); rb_provide("stringio.so");'
-            : 'ruby_init_ext("zlib.so", Init_zlib); ruby_init_ext("stringio.so", Init_stringio);',
-        // 1.9's encodings and transcoders are .so files in a normal build; here they're linked in (see patches/ruby/encs.sh).
-        encsStep = legacy
-            ? "touch enc_protos.inc enc_calls.inc enc_objs.txt"
-            : `sh ${toMsysPath(`${ROOT}/patches/ruby/encs.sh`)}`,
-        initProto = legacy ? "" : "void ruby_init_ext(const char *name, void (*init)(void));";
-    await bash`mkdir -p ${toMsysPath(zlibDir)} && cd ${toMsysPath(zlibDir)} && if [ ! -f libz.a ]; then export PATH="${bin}:$PATH" && curl -sL -o zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz && tar xf zlib.tar.gz --strip-components=1 && for f in ${zlibObjs}; do ${triple}-clang -O2 -c $f.c -o $f.o || exit 1; done && ${triple}-ar rcs libz.a *.o; fi`;
-
-    const zlibCflags = `-I${toMsysPath(zlibDir)} -Wno-error=incompatible-pointer-types`;
-    await bash`cd ${toMsysPath(p)} && export ${extraEnv} && LIBA=$(printf 'print:\n\t@echo $(LIBRUBY_A)\n' | make -s -f Makefile -f - print) && make miniruby.exe $LIBA && ${encsStep} && printf '#include "ruby.h"
-void Init_zlib(void);
-void Init_stringio(void);
-${initProto}
-#include "enc_protos.inc"
-void Init_ext(void) {
-#include "enc_calls.inc"
-${initZlib} }
-' > extinit.c && $CC $CFLAGS ${zlibCflags} -I. -I./include -I./.ext/include/i386-mingw32 -c ext/zlib/zlib.c -o zlib_ext.o && $CC $CFLAGS -I. -I./include -I./.ext/include/i386-mingw32 -c ext/stringio/stringio.c -o stringio_ext.o && $CC $CFLAGS -I. -I./include -I./.ext/include/i386-mingw32 -c extinit.c -o extinit.o && $AR d $LIBA dmyext.o && $AR rs $LIBA extinit.o zlib_ext.o stringio_ext.o $(cat enc_objs.txt) && make EXTLDFLAGS="-L${toMsysPath(zlibDir)} -lz" ruby.exe rubyw.exe && cp $LIBA \${LIBA%-static.a}.a && make ${name === "ruby-1.8.1" ? "install" : "install-bin install-lib"}`;
-}
 
 export function getPin(library: Library): string {
     return "git" in library.source ? library.source.tag : library.source.archive;

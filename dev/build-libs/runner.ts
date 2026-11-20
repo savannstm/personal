@@ -7,13 +7,11 @@ import pc from "picocolors";
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
 import { getPin, LIBRARIES, shouldBuildLibrary } from "./libraries.ts";
 import { libsProfileTag } from "./pgo.ts";
-import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN } from "./settings.ts";
-import { configureToolchain, CONSUMER_PROFILE, DEFAULT_PROFILE, updateEnv } from "./toolchain.ts";
-import type { BuildState, CliOptions, Ctx, Library, Toolchain, ToolchainProfile } from "./types.ts";
+import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN, WIN_TAR } from "./settings.ts";
+import { configureToolchain, CONSUMER_PROFILE, profileOf, updateEnv } from "./toolchain.ts";
+import type { BuildState, CliOptions, Ctx, Library, Toolchain } from "./types.ts";
 
-export function profileOf(library: Library): ToolchainProfile {
-    return { ...DEFAULT_PROFILE, ...library.profile };
-}
+const BUILDERS = { cmake: buildCMake, meson: buildMeson, rust: buildRust };
 
 /** Why a library selected by --only/--exclude is still not built, or null when it is. */
 export function skipReason(library: Library, options: CliOptions): null | string {
@@ -51,7 +49,7 @@ export async function buildRepos(options: CliOptions) {
         process.exit(0);
     }
 
-    await mkdir(options.reposRoot, { recursive: true });
+    await mkdir(settings.reposRoot, { recursive: true });
     await hideMsysLinkExe();
 
     const state = await loadBuildState();
@@ -82,7 +80,7 @@ async function stripLibmFromMsvcPkgconfig(toolchain: Toolchain) {
 }
 
 async function buildLibrary(library: Library, options: CliOptions, state: BuildState) {
-    const path = `${options.reposRoot}/${library.name}`,
+    const path = `${settings.reposRoot}/${library.name}`,
         pin = getPin(library),
         // A library built with the library profile records the profile too, so a retrained one rebuilds it.
         statePin = (library.statePin?.(pin) ?? pin) + libsProfileTag(library),
@@ -114,7 +112,7 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
             await $`curl -L -o ${archivePath} ${source.archive}`;
         }
         if (WIN) {
-            await $`"C:/Windows/System32/tar.exe" -xf ${archivePath} -C ${path}`;
+            await $`${WIN_TAR} -xf ${archivePath} -C ${path}`;
         } else if (archivePath.endsWith(".zip")) {
             await $`unzip -o ${archivePath} -d ${path}`;
         } else {
@@ -217,19 +215,8 @@ async function buildVariants(
             },
         };
 
-        switch (library.build ?? "cmake") {
-            case "cmake":
-                await buildCMake(library, ctx);
-                break;
-            case "meson":
-                await buildMeson(library, ctx);
-                break;
-            case "rust":
-                await buildRust(library, ctx);
-                break;
-            default:
-                await (library.build as (ctx: Ctx) => Promise<void>)(ctx);
-        }
+        const build = library.build ?? "cmake";
+        await (typeof build === "function" ? build(ctx) : BUILDERS[build](library, ctx));
 
         // Per variant, before markBuilt: the next variant's `git clean -fdx` wipes this one's in-tree artifacts
         // (PDBs), and a failed hook must not leave the variant recorded as built.

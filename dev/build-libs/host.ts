@@ -1,7 +1,6 @@
 // The build machine: toolchain environment, MSYS2 packages and required utilities.
 
 import { $ } from "dax";
-import { readdir } from "node:fs/promises";
 
 import {
     composePath,
@@ -9,16 +8,14 @@ import {
     MSYS2_MINGW_PACKAGES,
     toolDirs,
 } from "../../personal/install-tools/toolchain.ts";
-import { compareVersions } from "./check-updates.ts";
 import { LIBRARIES, MSYS2_EXTRA } from "./libraries.ts";
-import { LLVM_ROOT, MSYS2_ROOT, VSWHERE, WIN } from "./settings.ts";
+import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
+import { CLANG64, LLVM_ROOT, VSWHERE, WIN } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { Toolchain } from "./types.ts";
 
 const HOST_ARCH = "Hostx64",
     TARGET_ARCH = "x64";
-
-export const WINDOWS_ONLY_TOOLCHAINS: ReadonlySet<Toolchain> = new Set(["msvc"]);
 
 const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "sd", "sccache"] as const;
 const UNIX_UTILITIES = ["autoconf", "automake", "bison", "file", "flex", "unzip", "make", "pkg-config"] as const;
@@ -31,16 +28,6 @@ async function checkUtilities(names: readonly string[]): Promise<string[]> {
         }
     }
     return missing;
-}
-
-async function latestVersionDir(dir: string): Promise<string> {
-    const versions = await readdir(dir);
-    versions.sort(compareVersions);
-    const latest = versions.at(-1);
-    if (!latest) {
-        throw new Error(`Nothing found under ${dir}`);
-    }
-    return latest;
 }
 
 function purgeMsysFromPath(path: string): string {
@@ -57,28 +44,19 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
 
     switch (toolchain) {
         case "clang": {
-            process.env.PATH = `${MSYS2_ROOT}/clang64/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
+            process.env.PATH = `${LLVM_ROOT}/bin;${CLANG64}/bin;${purgeMsysFromPath(process.env.PATH ?? "")}`;
             process.env.MSYSTEM = "CLANG64";
             break;
         }
         case "msvc": {
             process.env.MSYSTEM = "";
 
-            const vsRoot = (
-                await $`${VSWHERE} -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`.text()
-            ).trim();
-            if (!vsRoot) {
-                throw new Error("vswhere: no VS installation with VC.Tools found");
-            }
-
             const sdkBase = "C:/Program Files (x86)/Windows Kits/10",
-                msvcToolsDir = `${vsRoot}/VC/Tools/MSVC`,
-                [msvcVersion, sdkVersion, clangVersion] = await Promise.all([
-                    latestVersionDir(msvcToolsDir),
+                [msvcRoot, sdkVersion, clangVersion] = await Promise.all([
+                    msvcToolsRoot(),
                     latestVersionDir(`${sdkBase}/Include`),
                     latestVersionDir(`${LLVM_ROOT}/lib/clang`),
                 ]),
-                msvcRoot = `${msvcToolsDir}/${msvcVersion}`,
                 msvcBin = `${msvcRoot}/bin/${HOST_ARCH}/${TARGET_ARCH}`,
                 sdkBin = `${sdkBase}/bin/${sdkVersion}/${TARGET_ARCH}`;
 
@@ -142,7 +120,7 @@ export async function verifyPrerequisites(toolchain: Toolchain): Promise<void> {
 }
 
 /** The CLANG64 packages that stand in for the libraries clang doesn't build (each library's `msys2`, see skipReason). */
-export function msys2LibraryPackages(): string[] {
+function msys2LibraryPackages(): string[] {
     return [...LIBRARIES.flatMap((library) => (library.msys2 ? [library.msys2] : [])), ...MSYS2_EXTRA];
 }
 

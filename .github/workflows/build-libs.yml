@@ -29,21 +29,9 @@ jobs:
         steps:
             - uses: actions/checkout@v7
 
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
+            - uses: ./.github/actions/build-libs-setup
 
-            - run: npm ci
 
-            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
-            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
-            - name: Update MSYS2
-              shell: pwsh
-              run: |
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # Installs the toolchain packages first (the keys include CLANG64's clang version), hence the filter.
             - name: Profile keys
@@ -98,20 +86,17 @@ jobs:
                   key: pgo-${{ steps.keys.outputs.llvm }}
 
     # The LLVM binaries (clang, lld, lldb, tools), bootstrapped from CLANG64's clang (ownClang: false). Plain -flto=full objects, no
-    # fat ones: they only get linked into executables. The runtimes are built by the llvm-runtimes job.
+    # fat ones: they only get linked into executables. The runtimes come from the llvm-runtimes job, downloaded before the build.
     llvm:
         name: LLVM
-        needs: pgo
+        needs: [pgo, llvm-runtimes]
         if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-project') }}
         runs-on: windows-2025
         steps:
             - uses: actions/checkout@v7
 
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
+            - uses: ./.github/actions/build-libs-setup
 
-            - run: npm ci
 
             # Resume: restores the installed clang and the build state from the latest earlier run, so a run that hit the 6 h
             # limit continues where it stopped.
@@ -128,15 +113,12 @@ jobs:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.llvm }}
                   key: pgo-${{ needs.pgo.outputs.llvm }}
 
-            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
-            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
-            - name: Update MSYS2
-              shell: pwsh
-              run: |
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
+
+            # The runtimes the llvm-runtimes job installed, unpacked over the restored prefix so the build links against them.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
 
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
@@ -164,16 +146,14 @@ jobs:
     # same C:/dev-clang layout as the llvm job; unpack both artifacts into one directory.
     llvm-runtimes:
         name: LLVM runtimes
-        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-runtimes') }}
+        # Also runs for an llvm-project run, which needs these runtimes.
+        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-runtimes') || contains(inputs.only, 'llvm-project') }}
         runs-on: windows-2025
         steps:
             - uses: actions/checkout@v7
 
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
+            - uses: ./.github/actions/build-libs-setup
 
-            - run: npm ci
 
             # Resume: restores the installed clang and the build state from the latest earlier run, so a run that hit the 6 h
             # limit continues where it stopped.
@@ -185,15 +165,6 @@ jobs:
                   key: llvm-rt-${{ github.run_id }}
                   restore-keys: llvm-rt-
 
-            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
-            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
-            - name: Update MSYS2
-              shell: pwsh
-              run: |
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
@@ -217,8 +188,8 @@ jobs:
                   retention-days: 14
                   if-no-files-found: warn
 
-    # Runs parallel to the llvm jobs. It never restores C:/dev-clang, so its libraries use CLANG64's clang (ownClang is set by
-    # the presence of C:/dev-clang/bin/clang.exe) and not the clang this pipeline builds.
+    # Runs parallel to the llvm jobs. Its C:/dev-clang holds only libraries, never the clang the llvm jobs build, so they are
+    # compiled with CLANG64's clang (ownClang is set by the presence of C:/dev-clang/release/bin/clang.exe).
     libs:
         name: Libraries
         needs: pgo
@@ -230,15 +201,11 @@ jobs:
         steps:
             - uses: actions/checkout@v7
 
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
+            - uses: ./.github/actions/build-libs-setup
 
-            - run: npm ci
 
             # Resume: restores the installed libraries and the build state (which libraries are done) from the latest earlier run,
-            # so a run that hit the 6 h limit continues where it stopped. The prefix differs from the llvm job's, and the restore
-            # keys from earlier pipelines that cached a clang here are not matched.
+            # so a run that hit the 6 h limit continues where it stopped. The cache key is this job's own, so no clang is restored.
             - uses: actions/cache/restore@v6
               with:
                   path: |
@@ -254,15 +221,6 @@ jobs:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.libs }}
                   key: pgo-${{ needs.pgo.outputs.libs }}
 
-            # index.ts runs pacman with its output discarded, so a failure there is invisible. Update the runner's MSYS2 core
-            # here with the output shown; the first -Syuu may stop after upgrading pacman/msys2-runtime, hence twice.
-            - name: Update MSYS2
-              shell: pwsh
-              run: |
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
 
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,
             # rust-src and the gnullvm target. The config's build dir is a path on the author's machine.

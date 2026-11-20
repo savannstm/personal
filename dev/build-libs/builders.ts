@@ -1,7 +1,9 @@
+import consola from "consola";
 import $ from "dax";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
+import pc from "picocolors";
 
-import { compareVersions } from "./check-updates.ts";
+import { msvcToolsRoot } from "./msvc.ts";
 import {
     buildDir,
     buildRoot,
@@ -9,7 +11,7 @@ import {
     DEBUG_TOOLCHAIN,
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
-    VSWHERE,
+    ROOT,
     WIN,
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
@@ -37,15 +39,22 @@ export async function stripDllImport(file: string): Promise<void> {
     await $`sd -s -- "__declspec(dllimport)" "" ${file}`;
 }
 
+// A patch that no longer applies (the source moved on) warns and the build continues, instead of throwing.
+export async function applyPatch(path: string, patch: string): Promise<void> {
+    try {
+        await $`git apply ${`${ROOT}/patches/${patch}`}`.cwd(path);
+    } catch (error) {
+        consola.warn(
+            pc.yellow(
+                `Patch ${patch} did not apply in ${path}: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+        );
+    }
+}
+
 // CLANG64 ships no MASM, which openmp's Windows assembly needs: the newest MSVC 64-bit host tools (ml64) provide it.
 async function msvcHostBin(): Promise<string> {
-    const vsRoot = (
-        await $`${VSWHERE} -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`.text()
-    ).trim();
-    const msvcToolsDir = `${vsRoot}/VC/Tools/MSVC`,
-        versions = await readdir(msvcToolsDir);
-    versions.sort(compareVersions);
-    return `${msvcToolsDir}/${versions.at(-1)}/bin/Hostx64/x64`;
+    return `${await msvcToolsRoot()}/bin/Hostx64/x64`;
 }
 
 export async function buildCMake(library: Library, ctx: Ctx) {
