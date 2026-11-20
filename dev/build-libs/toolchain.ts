@@ -94,7 +94,9 @@ export async function computeFlags(isDebug: boolean) {
 
     // ownLibcxx: libc++ is being built, and a second copy of its headers would make the wrappers (string.h) include_next into an empty one.
     // Pkg-config's include dirs are -isystem and would otherwise land ahead of the libc++ headers, so the libc++ dir goes first.
-    const libcxx = flags.toolchain === "msvc" || flags.ownLibcxx ? "" : `-isystem ${flags.ownClang || flags.ownRuntimes ? buildRoot(false) : CLANG64}/include/c++/v1`,
+    // Own libc++ headers: -nostdinc++ drops CLANG64's default libc++ dir, which would otherwise come after ours, so libc++'s string.h include_next lands on it and never reaches the C string.h.
+    const ownHeaders = flags.ownClang || flags.ownRuntimes,
+        libcxx = flags.toolchain === "msvc" || flags.ownLibcxx ? "" : `${ownHeaders ? "-nostdinc++ " : ""}-isystem ${ownHeaders ? buildRoot(false) : CLANG64}/include/c++/v1`,
         cFlags = `-std=gnu17 ${opt}`,
         cxxFlags = `-std=gnu++${flags.cxxStd} ${libcxx} ${opt}`,
         includeFlags = (
