@@ -70,7 +70,10 @@ export function profileOf(library: Library): ToolchainProfile {
     return { ...DEFAULT_PROFILE, ...library.profile };
 }
 
-export async function configureToolchain(options: CliOptions, profile: ToolchainProfile = DEFAULT_PROFILE): Promise<Conf> {
+export async function configureToolchain(
+    options: CliOptions,
+    profile: ToolchainProfile = DEFAULT_PROFILE,
+): Promise<Conf> {
     current = await genToolchains(options, profile);
     return current;
 }
@@ -96,7 +99,10 @@ export async function computeFlags(isDebug: boolean) {
     // Pkg-config's include dirs are -isystem and would otherwise land ahead of the libc++ headers, so the libc++ dir goes first.
     // Own libc++ headers: -nostdinc++ drops CLANG64's default libc++ dir, which would otherwise come after ours, so libc++'s string.h include_next lands on it and never reaches the C string.h.
     const ownHeaders = flags.ownClang || flags.ownRuntimes,
-        libcxx = flags.toolchain === "msvc" || flags.ownLibcxx ? "" : `${ownHeaders ? "-nostdinc++ " : ""}-isystem ${ownHeaders ? buildRoot(false) : CLANG64}/include/c++/v1`,
+        libcxx =
+            flags.toolchain === "msvc" || flags.ownLibcxx
+                ? ""
+                : `${ownHeaders ? "-nostdinc++ " : ""}-isystem ${ownHeaders ? buildRoot(false) : CLANG64}/include/c++/v1`,
         cFlags = `-std=gnu17 ${opt}`,
         cxxFlags = `-std=gnu++${flags.cxxStd} ${libcxx} ${opt}`,
         includeFlags = (
@@ -166,7 +172,10 @@ export async function updateEnv(isDebug: boolean) {
         ADDR2LINE: tools.addr2line,
         AR: tools.ar,
         AS: tools.asm,
-        C_INCLUDE_PATH: dedupPath(`${root}/include${SEP}${dropInactiveRoot(process.env.C_INCLUDE_PATH, inactiveRoot)}`, SEP),
+        C_INCLUDE_PATH: dedupPath(
+            `${root}/include${SEP}${dropInactiveRoot(process.env.C_INCLUDE_PATH, inactiveRoot)}`,
+            SEP,
+        ),
         CC: tools.cc,
         CFLAGS: `${cFlags} ${includeFlags}`,
         CPATH: dedupPath(`${root}/include${SEP}${dropInactiveRoot(process.env.CPATH, inactiveRoot)}`, SEP),
@@ -293,7 +302,9 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
     }
 
     if (profile.debugOpt) {
-        ldflags.push(...(options.toolchain === "msvc" ? RELEASE_NON_LTO_MSVC_LINKER_FLAGS : RELEASE_NON_LTO_LINKER_FLAGS));
+        ldflags.push(
+            ...(options.toolchain === "msvc" ? RELEASE_NON_LTO_MSVC_LINKER_FLAGS : RELEASE_NON_LTO_LINKER_FLAGS),
+        );
     }
 
     if (options.toolchain === "msvc") {
@@ -363,6 +374,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         ...(lto ? ["-flto=full", ...(profile.fatLto === false ? [] : ["-ffat-lto-objects"])] : []),
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
+        "-DNDEBUG",
     ];
 
     const cflags = [...shared.cflags, ...commonOptFlags],
@@ -372,7 +384,13 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
                       ...RELEASE_NON_LTO_MSVC_LINKER_FLAGS,
                       // The MSVC driver doesn't forward -ffat-lto-objects to lld-link (the MinGW/ELF ones pass --fat-lto-objects),
                       // and without it lld-link links the objects' machine code instead of LTOing their bitcode.
-                      ...(lto ? ["-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3", ...(profile.fatLto === false ? [] : ["-Wl,-fat-lto-objects"])] : []),
+                      ...(lto
+                          ? [
+                                "-Wl,-LTCG",
+                                "-Wl,-OPT:LLDLTO=3",
+                                ...(profile.fatLto === false ? [] : ["-Wl,-fat-lto-objects"]),
+                            ]
+                          : []),
                   ]
                 : [...RELEASE_NON_LTO_LINKER_FLAGS, ...(lto ? ["-Wl,--lto-O3"] : [])];
 
@@ -400,7 +418,12 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     // The context-sensitive part of the library profile is applied in the LTO link, which for the static libraries
     // happens in the consumer. Functions without profile records (everything outside the trained libraries) are left alone.
     // The MSVC driver doesn't pass the profile on to lld-link.
-    if (profile.linkLibsProfile && options.toolchain !== "msvc" && !settings.pgoTraining && existsSync(settings.libsProfdata)) {
+    if (
+        profile.linkLibsProfile &&
+        options.toolchain !== "msvc" &&
+        !settings.pgoTraining &&
+        existsSync(settings.libsProfdata)
+    ) {
         ldflags.push(`-fprofile-use=${settings.libsProfdata}`);
     }
 
@@ -548,7 +571,9 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     // entry: LLVM's try_compile checks run this file without the -D entries, and would otherwise reset PKG_CONFIG_PATH here.
     lines.push("if (DEFINED ENV{LLVM_DEPS_PREFIX})");
     lines.push('    set(CMAKE_PREFIX_PATH "$ENV{LLVM_DEPS_PREFIX}" CACHE STRING "" FORCE)');
-    lines.push('    set(ENV{PKG_CONFIG_PATH} "$ENV{LLVM_DEPS_PREFIX}/lib/pkgconfig;$ENV{LLVM_DEPS_PREFIX}/share/pkgconfig")');
+    lines.push(
+        '    set(ENV{PKG_CONFIG_PATH} "$ENV{LLVM_DEPS_PREFIX}/lib/pkgconfig;$ENV{LLVM_DEPS_PREFIX}/share/pkgconfig")',
+    );
     lines.push("else()");
     lines.push(`    set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(WIN ? ";" : ":")}")`);
     lines.push("endif()");
@@ -618,7 +643,9 @@ function toIni(b: BuildConfig, tools: Tools): string {
     const needCompilerArgs = WIN && b.toolchain !== "msvc";
     for (const [key, prop] of INI_BINARIES) {
         if (needCompilerArgs && (key === "c" || key === "cpp")) {
-            lines.push(`${key} = ${quoteArr(`sccache ${tools[prop]} -fuse-ld=lld --target=${resolveWinTarget(b.toolchain)}`)}`);
+            lines.push(
+                `${key} = ${quoteArr(`sccache ${tools[prop]} -fuse-ld=lld --target=${resolveWinTarget(b.toolchain)}`)}`,
+            );
         } else if (key === "c" || key === "cpp") {
             lines.push(`${key} = ['sccache', '${tools[prop]}']`);
         } else {

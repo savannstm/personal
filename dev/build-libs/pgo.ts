@@ -514,8 +514,9 @@ export async function trainLlvm(path: string, llvmArgs: string, major: string, m
         lldDir = `${LLVM_PGO_DIR}/lld-train`,
         irProfdata = `${inst}/ir.profdata`,
         instProfdata = `${inst}/bin/llvm-profdata.exe`,
-        cflags = "-O3 -march=x86-64-v3 -mtune=generic",
-        csCflags = `-O3 -march=${march} -mtune=${march}`,
+        // -DNDEBUG: these replace CMake's Release flags, which carry it; without it the instrumented clang has assertions (LLVM_ENABLE_ASSERTIONS=OFF doesn't add it back).
+        cflags = "-O3 -DNDEBUG -march=x86-64-v3 -mtune=generic",
+        csCflags = `-O3 -DNDEBUG -march=${march} -mtune=${march}`,
         withLld = settings.pgo.has("lld"),
         projects = withLld ? "clang;lld" : "clang",
         tools = withLld ? ["clang", "lld"] : ["clang"];
