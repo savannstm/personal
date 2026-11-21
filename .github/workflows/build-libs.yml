@@ -22,20 +22,26 @@ concurrency:
 
 jobs:
     # The PGO profiles are named after a key of everything they're trained from (library versions, patches, trainers,
-    # compiler; see resolvePgoProfiles in pgo.ts) and cached under that name. Only a pipeline whose profile isn't cached
-    # for the current key is trained, so a library or compiler update retrains exactly what it affects.
-    pgo:
-        name: PGO
+    # compiler; see resolvePgoProfiles in pgo.ts) and cached under that name. Only a profile that isn't cached for the
+    # current key is trained, so a library or compiler update retrains exactly what it affects. LLVM's profile trains in
+    # stages, each its own job: the IR profiles of clang (needs no libraries) and of lld (links the PGO libraries) in
+    # parallel, then the final profile's context-sensitive stage, which builds clang and lld together from both.
+    pgo-keys:
+        name: PGO keys
         runs-on: windows-2025
         outputs:
             libs: ${{ steps.keys.outputs.libs }}
             llvm: ${{ steps.keys.outputs.llvm }}
+            ir-clang: ${{ steps.keys.outputs.ir-clang }}
+            ir-lld: ${{ steps.keys.outputs.ir-lld }}
+            libs-hit: ${{ steps.hit-libs.outputs.cache-hit }}
+            llvm-hit: ${{ steps.hit-llvm.outputs.cache-hit }}
+            ir-clang-hit: ${{ steps.hit-ir-clang.outputs.cache-hit }}
+            ir-lld-hit: ${{ steps.hit-ir-lld.outputs.cache-hit }}
         steps:
             - uses: actions/checkout@v7
 
             - uses: ./.github/actions/build-libs-setup
-
-
 
             # Installs the toolchain packages first (the keys include CLANG64's clang version), hence the filter.
             - name: Profile keys
@@ -44,7 +50,7 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
-                  $keys = node dev/build-libs/index.ts --pgo clang,lld,libs --print-pgo-keys | Select-String '^(libs|llvm)='
+                  $keys = node dev/build-libs/index.ts --pgo clang,lld,libs --print-pgo-keys | Select-String '^(libs|llvm|ir-clang|ir-lld)='
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   $lines = $keys | ForEach-Object { $_.Line }
                   if ('${{ inputs.skip_pgo }}' -eq 'true') {
@@ -57,58 +63,205 @@ jobs:
                   }
                   $lines | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
 
+            # Which profiles are already cached; the jobs below train only the missing ones.
+            - name: Library profile cached?
+              id: hit-libs
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.libs }}
+                  key: pgo-${{ steps.keys.outputs.libs }}
+                  lookup-only: true
+
+            - name: LLVM profile cached?
+              id: hit-llvm
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
+                  key: pgo-${{ steps.keys.outputs.llvm }}
+                  lookup-only: true
+
+            - name: Clang IR profile cached?
+              id: hit-ir-clang
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.ir-clang }}
+                  key: pgo-${{ steps.keys.outputs.ir-clang }}
+                  lookup-only: true
+
+            - name: lld IR profile cached?
+              id: hit-ir-lld
+              if: ${{ !inputs.retrain }}
+              uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.ir-lld }}
+                  key: pgo-${{ steps.keys.outputs.ir-lld }}
+                  lookup-only: true
+
+    # Clang's IR profile: compiling Sema.cpp. Needs no libraries. Repos go to C:, the workspace drive only has ~14 GB free.
+    pgo-clang:
+        name: PGO clang
+        needs: pgo-keys
+        if: ${{ !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-clang-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
+            - name: Train
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo clang --pgo-train --pgo-ir-only --only llvm-project
+
+            - uses: actions/cache/save@v6
+              if: always() && hashFiles(format('dev/build-libs/pgo/profiles/{0}', needs.pgo-keys.outputs.ir-clang)) != ''
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.ir-clang }}
+                  key: pgo-${{ needs.pgo-keys.outputs.ir-clang }}
+
+    # The library profile, and the PGO libraries built with it (the prefix) for the lld training, which links ImageMagick
+    # and its chain. A cached profile only rebuilds the libraries from it (index.ts's --pgo libs --pgo-train stops after the
+    # library pipeline either way).
+    pgo-libs:
+        name: PGO libraries
+        needs: pgo-keys
+        if: ${{ !inputs.skip_pgo && (needs.pgo-keys.outputs.libs-hit != 'true' || (needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')))) }}
+        runs-on: windows-2025
+        env:
+            # Whether the LLVM profile is still to be trained: its jobs need the prefix.
+            LLVM_NEEDED: ${{ needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
             - name: Restore the library profile
               id: libs
               if: ${{ !inputs.retrain }}
               uses: actions/cache/restore@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.libs }}
-                  key: pgo-${{ steps.keys.outputs.libs }}
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
+                  key: pgo-${{ needs.pgo-keys.outputs.libs }}
 
-            - name: Restore the LLVM profile
-              id: llvm
-              if: ${{ !inputs.retrain }}
+            - name: Restore the prefix
+              id: prefix
+              if: ${{ !inputs.retrain && env.LLVM_NEEDED == 'true' }}
               uses: actions/cache/restore@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
-                  key: pgo-${{ steps.keys.outputs.llvm }}
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
 
-            # Trains only the missing profiles (index.ts skips a pipeline whose profile exists). LLVM's training needs
-            # llvm-project's sources and ImageMagick built, hence --only llvm-project; without it only the libraries train.
-            # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Train
-              if: ${{ !inputs.skip_pgo && (steps.libs.outputs.cache-hit != 'true' || steps.llvm.outputs.cache-hit != 'true') }}
               shell: pwsh
-              run: |
-                  if ('${{ steps.llvm.outputs.cache-hit }}' -eq 'true') {
-                      node dev/build-libs/index.ts --repos C:/repos --pgo libs --pgo-train --magick-variants q16hdri
-                  } else {
-                      node dev/build-libs/index.ts --repos C:/repos --pgo clang,lld,libs --pgo-train --magick-variants q16hdri --only llvm-project
-                  }
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo libs --pgo-train --magick-variants q16hdri
 
             - name: Save the library profile
-              if: always() && steps.libs.outputs.cache-hit != 'true' && hashFiles(format('dev/build-libs/pgo/profiles/{0}', steps.keys.outputs.libs)) != ''
+              if: always() && steps.libs.outputs.cache-hit != 'true' && hashFiles(format('dev/build-libs/pgo/profiles/{0}', needs.pgo-keys.outputs.libs)) != ''
               uses: actions/cache/save@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.libs }}
-                  key: pgo-${{ steps.keys.outputs.libs }}
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
+                  key: pgo-${{ needs.pgo-keys.outputs.libs }}
 
-            - name: Save the LLVM profile
-              if: always() && steps.llvm.outputs.cache-hit != 'true' && hashFiles(format('dev/build-libs/pgo/profiles/{0}', steps.keys.outputs.llvm)) != ''
+            - name: Save the prefix
+              if: success() && env.LLVM_NEEDED == 'true' && steps.prefix.outputs.cache-hit != 'true'
               uses: actions/cache/save@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ steps.keys.outputs.llvm }}
-                  key: pgo-${{ steps.keys.outputs.llvm }}
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
+
+    # lld's IR profile: linking ImageMagick and its chain, from the PGO libraries (the prefix). Without the cached prefix
+    # the libraries are rebuilt from the cached library profile.
+    pgo-lld:
+        name: PGO lld
+        needs: [pgo-keys, pgo-libs]
+        if: ${{ !failure() && !cancelled() && !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-lld-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
+                  key: pgo-${{ needs.pgo-keys.outputs.libs }}
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
+
+            - name: Train
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo lld,libs --pgo-train --pgo-ir-only --magick-variants q16hdri --only llvm-project
+
+            - uses: actions/cache/save@v6
+              if: always() && hashFiles(format('dev/build-libs/pgo/profiles/{0}', needs.pgo-keys.outputs.ir-lld)) != ''
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.ir-lld }}
+                  key: pgo-${{ needs.pgo-keys.outputs.ir-lld }}
+
+    # The final LLVM profile: one full-LTO build of clang and lld together, instrumented after LTO's inlining, from both IR
+    # profiles, trained on both workloads.
+    pgo-llvm:
+        name: PGO LLVM
+        needs: [pgo-keys, pgo-libs, pgo-clang, pgo-lld]
+        if: ${{ !failure() && !cancelled() && !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
+                  key: pgo-${{ needs.pgo-keys.outputs.libs }}
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.ir-clang }}
+                  key: pgo-${{ needs.pgo-keys.outputs.ir-clang }}
+
+            - uses: actions/cache/restore@v6
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.ir-lld }}
+                  key: pgo-${{ needs.pgo-keys.outputs.ir-lld }}
+
+            - name: Train
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo clang,lld,libs --pgo-train --magick-variants q16hdri --only llvm-project
+
+            - uses: actions/cache/save@v6
+              if: always() && hashFiles(format('dev/build-libs/pgo/profiles/{0}', needs.pgo-keys.outputs.llvm)) != ''
+              with:
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.llvm }}
+                  key: pgo-${{ needs.pgo-keys.outputs.llvm }}
 
     # The LLVM binaries (clang, lld, lldb, tools), bootstrapped from CLANG64's clang (ownClang: false). Plain -flto=full objects, no
     # fat ones: they only get linked into executables. The runtimes come from the llvm-runtimes job, downloaded before the build.
     llvm:
         name: LLVM
-        needs: [pgo, llvm-runtimes]
-        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-project') }}
+        needs: [pgo-keys, pgo-llvm, llvm-runtimes]
+        if: ${{ !failure() && !cancelled() && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
         env:
-            PGO_LLVM_PROFILE: ${{ inputs.skip_pgo && needs.pgo.outputs.llvm || '' }}
+            PGO_LLVM_PROFILE: ${{ inputs.skip_pgo && needs.pgo-keys.outputs.llvm || '' }}
         steps:
             - uses: actions/checkout@v7
 
@@ -127,8 +280,8 @@ jobs:
 
             - uses: actions/cache/restore@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.llvm }}
-                  key: pgo-${{ needs.pgo.outputs.llvm }}
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.llvm }}
+                  key: pgo-${{ needs.pgo-keys.outputs.llvm }}
 
 
             # The runtimes the llvm-runtimes job installed, unpacked over the restored prefix so the build links against them.
@@ -209,13 +362,13 @@ jobs:
     # compiled with CLANG64's clang (ownClang is set by the presence of C:/dev-clang/release/bin/clang.exe).
     libs:
         name: Libraries
-        needs: pgo
+        needs: [pgo-keys, pgo-libs]
         # An llvm-runtimes-only run has no libraries to build; without this the job still trains the PGO chain and builds llvm-runtimes.
-        if: ${{ inputs.only == '' || !contains(inputs.only, 'llvm-runtimes') }}
+        if: ${{ !failure() && !cancelled() && (inputs.only == '' || !contains(inputs.only, 'llvm-runtimes')) }}
         runs-on: windows-2025
         env:
             INPUT_ONLY: ${{ inputs.only }}
-            PGO_LIBS_PROFILE: ${{ inputs.skip_pgo && needs.pgo.outputs.libs || '' }}
+            PGO_LIBS_PROFILE: ${{ inputs.skip_pgo && needs.pgo-keys.outputs.libs || '' }}
         steps:
             - uses: actions/checkout@v7
 
@@ -236,8 +389,8 @@ jobs:
             # state, so a new profile rebuilds them and an unchanged one doesn't.
             - uses: actions/cache/restore@v6
               with:
-                  path: dev/build-libs/pgo/profiles/${{ needs.pgo.outputs.libs }}
-                  key: pgo-${{ needs.pgo.outputs.libs }}
+                  path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
+                  key: pgo-${{ needs.pgo-keys.outputs.libs }}
 
 
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,

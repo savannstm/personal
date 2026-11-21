@@ -4,7 +4,16 @@ import { appendFile, cp, writeFile } from "node:fs/promises";
 import { applyPatch, buildAutoconf, buildPlain, cmakeVal, copyLib, movePdbs, stripDllImport } from "./builders.ts";
 import { llvmProject, llvmRuntimes } from "./llvm.ts";
 import { ruby } from "./ruby.ts";
-import { DEBUG_TOOLCHAIN, ICU_DATA_FILTERS, magickSuffix, RELEASE_TOOLCHAIN, ROOT, settings, WIN } from "./settings.ts";
+import {
+    DEBUG_TOOLCHAIN,
+    ICU_DATA_FILTERS,
+    MAGICK_PGO_VARIANT,
+    magickSuffix,
+    RELEASE_TOOLCHAIN,
+    ROOT,
+    settings,
+    WIN,
+} from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
@@ -29,7 +38,22 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
     },
 };
 
-export const MSYS2_EXTRA = ["mesa", "imagemagick"];
+// ffmpeg: its CLI generates the PGO ffmpeg trainer's inputs.
+/** Runs `build` with the library profile (-fprofile-use) taken out of the compiler flags in the environment. */
+async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
+    const names = ["CFLAGS", "CXXFLAGS", "LDFLAGS"] as const,
+        saved = names.map((name) => process.env[name]);
+    for (const name of names) {
+        process.env[name] = process.env[name]?.replace(/ ?-fprofile-use=\S+/g, "");
+    }
+    try {
+        return await build();
+    } finally {
+        names.forEach((name, index) => (process.env[name] = saved[index]));
+    }
+}
+
+export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg"];
 
 const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define HAVE_INTTYPES_H 1
@@ -1032,14 +1056,25 @@ export const LIBRARIES: Library[] = [
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.c`} MagickCore/pocketfft.c`.cwd(path);
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.h`} MagickCore/pocketfft.h`.cwd(path);
 
-            for (const { depth, hdri } of settings.magickVariants) {
-                const hdr = hdri ? "enable" : "disable";
+            for (const variant of settings.magickVariants) {
+                const { depth, hdri } = variant,
+                    hdr = hdri ? "enable" : "disable",
+                    // Only the PGO variant is trained and gets the library profile: the others (Q8) are built without it, and
+                    // not at all while the profile is being trained.
+                    profiled = magickSuffix(variant) === magickSuffix(MAGICK_PGO_VARIANT);
+                if (!profiled && settings.libsPgo === "gen") {
+                    continue;
+                }
+                const build = <T>(run: () => Promise<T>) =>
+                    profiled || settings.libsPgo !== "use" ? run() : withoutLibsProfile(run);
                 await step(`q${depth}-${hdr}-hdri`, () =>
-                    buildAutoconf(path, isDebug, root, {
-                        args:
-                            `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${depth} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
-                            "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
-                    }),
+                    build(() =>
+                        buildAutoconf(path, isDebug, root, {
+                            args:
+                                `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${depth} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
+                                "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
+                        }),
+                    ),
                 );
             }
         },
@@ -1066,10 +1101,12 @@ export const LIBRARIES: Library[] = [
         build: async ({ isDebug, msvc, path }) => {
             const submodules = ["qtbase", "qtimageformats", "qttools", "qtsvg"],
                 common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${msvc ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-opengl desktop -no-egl"}`,
-                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-harmonydeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""}`;
+                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -no-feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-harmonydeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""} -no-feature-vulkan`;
 
             await $`git submodule update --init --depth 1 ${submodules}`.cwd(path);
             await $`git submodule update --init --recursive --depth 1`.cwd(`${path}/qttools`);
+            // qlalr and qvkgen (Vulkan is off) have no feature switch; tracegen/tracepointgen only serve the lttng/etw/ctf features, which are off.
+            await applyPatch(`${path}/qtbase`, "qtbase-drop-unused-tools.patch");
 
             if (isDebug) {
                 if (msvc) {

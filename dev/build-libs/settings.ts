@@ -33,6 +33,7 @@ export const ICU_DATA_FILTERS = await readFile(`${ROOT}/patches/filters.json`, "
 // clang/lld: what llvm-project's profile is trained on (lld links ImageMagick, so it needs the libraries built). libs: the PGO pipeline for the libraries with trainers in patches/pgo.
 export const PGO_TARGETS = ["clang", "lld", "libs"] as const;
 export type PgoTarget = (typeof PGO_TARGETS)[number];
+export type LlvmTarget = Exclude<PgoTarget, "libs">;
 
 // Library PGO: "gen" builds the trained libraries instrumented, "use" builds it with the merged profile, null is a normal build.
 export type LibsPgoMode = "gen" | "use" | null;
@@ -41,6 +42,10 @@ export interface MagickVariant {
     depth: number;
     hdri: boolean;
 }
+
+// The ImageMagick variant the PGO trainers link and whose libraries get the library profile; other variants are built without it
+// (--magick-variants must include this one for a training run).
+export const MAGICK_PGO_VARIANT: MagickVariant = { depth: 16, hdri: true };
 
 /** The suffix ImageMagick gives the variant's libraries, e.g. `MagickCore-7.Q16HDRI`. */
 export function magickSuffix({ depth, hdri }: MagickVariant): string {
@@ -55,10 +60,14 @@ export const settings = {
     pgo: new Set<PgoTarget>(PGO_TARGETS) as ReadonlySet<PgoTarget>,
     // Training run: profiling builds without -flto, and the profiles get written. Otherwise the cached profiles are only read.
     pgoTraining: false,
+    // With pgoTraining: train only the llvm targets' IR profiles (each from its own instrumented build), not the final one.
+    pgoIrOnly: false,
     libsPgo: null as LibsPgoMode,
     // This run's profiles, keyed by its sources and compiler (resolvePgoProfiles); empty until resolved.
     libsProfdata: "",
     llvmProfdata: "",
+    // The IR profile of each llvm target in `pgo`; the final profile's context-sensitive stage starts from their merge.
+    llvmIrProfdata: {} as Partial<Record<LlvmTarget, string>>,
     magickVariants: [] as MagickVariant[],
     ffmpegVariants: [] as string[],
 };
@@ -69,6 +78,10 @@ export function buildRoot(isDebug: boolean): string {
 
 export function buildDir(isDebug: boolean): string {
     return isDebug ? "debug" : "release";
+}
+
+export function llvmTargets(): LlvmTarget[] {
+    return PGO_TARGETS.filter((target): target is LlvmTarget => target !== "libs" && settings.pgo.has(target));
 }
 
 export function llvmPgo(): boolean {

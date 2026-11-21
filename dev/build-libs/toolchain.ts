@@ -279,7 +279,7 @@ const RELEASE_NON_LTO_MSVC_LINKER_FLAGS = [
     "-Wl,-NOCOFFGRPINFO",
     "-Wl,-EMITPOGOPHASEINFO",
 ];
-const RELEASE_NON_LTO_LINKER_FLAGS = [
+export const RELEASE_NON_LTO_LINKER_FLAGS = [
     "-Wl,-O3",
     "-Wl,--gc-sections",
     "-Wl,--as-needed",
@@ -287,6 +287,24 @@ const RELEASE_NON_LTO_LINKER_FLAGS = [
     "-Wl,--build-id=none",
     "-Wl,--icf=all",
     "-Wl,--no-insert-timestamp",
+];
+// What buildDebug passes a clang (MinGW) -O0 build of a sanitized library: the llvm-project training compiles with them, so
+// the clang it trains is profiled on the code generation, DWARF and ASAN instrumentation the debug builds use.
+export const DEBUG_TRAIN_CFLAGS = [
+    "-O0",
+    "-g2",
+    "-gdwarf-5",
+    "-glldb",
+    "-gcolumn-info",
+    "-fstandalone-debug",
+    "-gz=zstd",
+    "-fstack-protector-strong",
+    "-ftrivial-auto-var-init=pattern",
+    "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE",
+    "-fsanitize=address",
+    "-fsanitize-address-use-after-scope",
+    "-fsanitize-address-use-after-return=runtime",
+    "-fsanitize-annotate-debug-info=address",
 ];
 const RELEASE_ELF_LINKER_FLAGS = ["-Wl,-z,now", "-Wl,-z,norelro", "-Wl,-z,nosectionheader"];
 
@@ -377,7 +395,16 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         "-DNDEBUG",
     ];
 
-    const cflags = [...shared.cflags, ...commonOptFlags],
+    const libsPgo = profile.pgo === false ? null : settings.libsPgo,
+        // -w silences every warning, the profile mismatch ones too (and no flag after it turns one back on): while the library
+        // profile is applied, the warnings are off by group instead, with only -Wprofile-instr-out-of-date on.
+        cflags = [
+            ...(libsPgo === "use"
+                ? shared.cflags.map((flag) => (flag === "-w" ? "-Wno-everything" : flag))
+                : shared.cflags),
+            ...commonOptFlags,
+            ...(libsPgo === "use" ? ["-Wprofile-instr-out-of-date"] : []),
+        ],
         linkerFlags =
             options.toolchain === "msvc"
                 ? [
@@ -405,7 +432,6 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
 
     const ldflags = [...shared.ldflags, ...commonOptFlags, ...linkerFlags];
 
-    const libsPgo = profile.pgo === false ? null : settings.libsPgo;
     if (libsPgo === "gen") {
         // Atomic counter updates: ImageMagick (OpenMP) and libjxl run the instrumented code from several threads.
         // The link flag pulls in the profile runtime, which configure-time link checks also need.

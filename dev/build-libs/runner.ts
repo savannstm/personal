@@ -159,7 +159,7 @@ async function buildVariants(
 
     await configureToolchain(options, profileOf(library));
     // A training run stops once llvm-project's profile is trained (its prepare): the profiled build is the LLVM job's.
-    const trainsLlvm = library.name === "llvm-project" && settings.pgoTraining && llvmPgo() && !existsSync(settings.llvmProfdata);
+    const trainsLlvm = library.name === "llvm-project" && settings.pgoTraining && llvmPgo() && (settings.pgoIrOnly || !existsSync(settings.llvmProfdata));
     await library.prepare?.({ msvc, path });
     if (trainsLlvm) {
         consola.success(pc.green("LLVM profile trained; skipping the build."));

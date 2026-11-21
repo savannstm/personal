@@ -1,0 +1,26 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index ce63a9ca..4e119608 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -21,8 +21,6 @@ function(find_or_build_bootstrap_names)
+     endif()
+     add_subdirectory(tools/moc)
+     add_subdirectory(tools/rcc)
+-    add_subdirectory(tools/tracepointgen)
+-    add_subdirectory(tools/tracegen)
+     add_subdirectory(tools/cmake_automoc_parser)
+ endfunction()
+ 
+diff --git a/src/tools/CMakeLists.txt b/src/tools/CMakeLists.txt
+index 5ed45088..0d1c988f 100644
+--- a/src/tools/CMakeLists.txt
++++ b/src/tools/CMakeLists.txt
+@@ -11,8 +11,6 @@ if (QT_FEATURE_dbus)
+     add_subdirectory(qdbuscpp2xml)
+     add_subdirectory(qdbusxml2cpp)
+ endif()
+-add_subdirectory(qlalr)
+-add_subdirectory(qvkgen)
+ if (QT_FEATURE_commandlineparser)
+     add_subdirectory(qtpaths)
+ endif()
