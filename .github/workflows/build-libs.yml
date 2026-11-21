@@ -41,10 +41,21 @@ jobs:
             - name: Profile keys
               id: keys
               shell: pwsh
+              env:
+                  GH_TOKEN: ${{ github.token }}
               run: |
                   $keys = node dev/build-libs/index.ts --pgo clang,lld,libs --print-pgo-keys | Select-String '^(libs|llvm)='
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  $keys | ForEach-Object { $_.Line } | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
+                  $lines = $keys | ForEach-Object { $_.Line }
+                  if ('${{ inputs.skip_pgo }}' -eq 'true') {
+                      # Names of the most recently used cached profiles, whatever key they were trained under.
+                      $lines = foreach ($name in 'libs', 'llvm') {
+                          $key = gh cache list --key "pgo-$name-" --sort last_accessed_at --order desc --limit 1 --json key --jq '.[0].key'
+                          if (-not $key) { throw "skip_pgo: no cached $name profile" }
+                          "$name=$($key -replace '^pgo-', '')"
+                      }
+                  }
+                  $lines | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
 
             - name: Restore the library profile
               id: libs
@@ -96,6 +107,8 @@ jobs:
         needs: [pgo, llvm-runtimes]
         if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-project') }}
         runs-on: windows-2025
+        env:
+            PGO_LLVM_PROFILE: ${{ inputs.skip_pgo && needs.pgo.outputs.llvm || '' }}
         steps:
             - uses: actions/checkout@v7
 
@@ -202,6 +215,7 @@ jobs:
         runs-on: windows-2025
         env:
             INPUT_ONLY: ${{ inputs.only }}
+            PGO_LIBS_PROFILE: ${{ inputs.skip_pgo && needs.pgo.outputs.libs || '' }}
         steps:
             - uses: actions/checkout@v7
 

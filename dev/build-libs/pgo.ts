@@ -324,6 +324,10 @@ export async function resolvePgoProfiles() {
         String(runTrainers),
         String(mergeNormalized),
     ])}.profdata`;
+    // CI's skip_pgo reuses the latest cached profile (named by its older key) instead of one for this key.
+    if (process.env.PGO_LIBS_PROFILE) {
+        settings.libsProfdata = `${PROFILES_DIR}/${process.env.PGO_LIBS_PROFILE}`;
+    }
 
     const llvm = LIBRARIES.find((library) => library.name === "llvm-project")!,
         targets = PGO_TARGETS.filter((target) => target !== "libs" && settings.pgo.has(target)).join("+");
@@ -334,6 +338,9 @@ export async function resolvePgoProfiles() {
         targets,
         String(trainLlvm),
     ])}.profdata`;
+    if (process.env.PGO_LLVM_PROFILE) {
+        settings.llvmProfdata = `${PROFILES_DIR}/${process.env.PGO_LLVM_PROFILE}`;
+    }
 }
 
 const hashes = new Map<string, { hash: string; mtime: number }>();
