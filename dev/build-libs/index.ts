@@ -19,9 +19,8 @@ import {
     PGO_TARGETS,
     type PgoTarget,
     settings,
-    WIN,
 } from "./settings.ts";
-import { configureToolchain, CONSUMER_PROFILE, isToolchain, TOOLCHAINS, WINDOWS_ONLY_TOOLCHAINS } from "./toolchain.ts";
+import { configureToolchain, CONSUMER_PROFILE, isToolchain, TOOLCHAINS } from "./toolchain.ts";
 import type { CliOptions } from "./types.ts";
 
 function splitList(value: string | undefined): string[] {
@@ -34,11 +33,6 @@ function splitList(value: string | undefined): string[] {
 function validateToolchain(toolchain: string): void {
     if (!isToolchain(toolchain)) {
         throw new Error(`Invalid toolchain "${toolchain}". Valid toolchains are: ${TOOLCHAINS.join(", ")}.`);
-    }
-    if (!WIN && WINDOWS_ONLY_TOOLCHAINS.has(toolchain)) {
-        throw new Error(
-            `Toolchain "${toolchain}" is only available on Windows, but the current platform is ${process.platform}.`,
-        );
     }
 }
 
@@ -65,7 +59,6 @@ function parseFfmpegVariants(value: string): string[] {
     return variants;
 }
 
-/** Parses the command line into the options and the run's `settings`. */
 function parseCliArgs(): CliOptions {
     const program = new Command();
 
@@ -83,32 +76,32 @@ function parseCliArgs(): CliOptions {
         .option("--only-release", "Only build the release (static) variant of each library")
         .option(
             "--magick-variants <variants>",
-            "ImageMagick builds, comma-separated: q8, q16 or q32, each optionally with hdri. The PGO training runs need q16hdri",
+            "ImageMagick variants (q8, q16, q32; optional hdri)",
             "q8,q16hdri",
         )
         .option(
             "--ffmpeg-variants <variants>",
-            `FFmpeg builds, comma-separated: ${Object.keys(FFMPEG_VARIANTS).join(", ")}`,
+            `FFmpeg variants: ${Object.keys(FFMPEG_VARIANTS).join(", ")}`,
             Object.keys(FFMPEG_VARIANTS).join(","),
         )
         .option(
             "--pgo <targets>",
-            "Comma-separated PGO targets, or `off`. clang, lld: train llvm-project's profile on compiling clang and linking ImageMagick (lld needs the libraries built). With --pgo-train, llvm-project stops after its profile is trained (no build). libs: profile the libraries with trainers in patches/pgo (ImageMagick and its chain, FFmpeg, harfbuzz as Qt uses it, quickjs, nuspell with ICU, libarchive) first (alone, it stops after that)",
+            "PGO targets: clang, lld, libs, or off",
             "clang,lld,libs",
         )
         .option(
             "--pgo-train",
-            "Train the --pgo profiles missing for this build (they are keyed by the libraries' versions, patches, trainers and compiler): profiling builds without -flto, the profiles are written to pgo/profiles. Without it, existing profiles are only read",
+            "Train missing --pgo profiles into pgo/profiles",
             false,
         )
         .option(
             "--pgo-ir-only",
-            "With --pgo-train: train only the IR profile of each clang/lld target (clang needs no libraries), not the final profile, whose context-sensitive stage builds all targets together from those IR profiles",
+            "With --pgo-train: train only the IR profiles",
             false,
         )
         .option(
             "--print-pgo-keys",
-            "Print the --pgo targets' profile file names for this build as `libs=<file>`, `llvm=<file>` and `ir-<target>=<file>` lines (for CI caching) and exit",
+            "Print the PGO profile file names and exit",
             false,
         )
         .option("--gen-toolchains", "Generate toolchain files in ./toolchains with default settings and exit")
@@ -165,13 +158,13 @@ function parseCliArgs(): CliOptions {
 
     if (opts.prefix) {
         settings.prefix = opts.prefix as string;
-    } else if (WIN) {
+    } else {
         settings.prefix = `C:/dev-${toolchain}`;
     }
 
     if (opts.repos) {
         settings.reposRoot = resolve(opts.repos as string).replaceAll("\\", "/");
-    } else if (WIN) {
+    } else {
         settings.reposRoot = `C:/Repos-${toolchain}`;
     }
 
@@ -186,7 +179,6 @@ if (options.checkLibraryUpdates) {
     exit(0);
 }
 
-// The profile files for this build's sources and compiler (keyed by CLANG64's clang version, so resolved once it's installed).
 async function resolveProfiles() {
     if (settings.pgo.size > 0) {
         $.setPrintCommand(false);
@@ -223,14 +215,10 @@ if (options.printPgoKeys) {
 await verifyPrerequisites(options.toolchain);
 consola.info(pc.cyan(`Toolchain: ${options.toolchain}`));
 
-// 1. Library PGO. Training builds the trained libraries instrumented, runs the trainers and rebuilds them with the
-//    profile; otherwise they're rebuilt with the cached profile.
 if (settings.pgo.has("libs")) {
     await libsPgo(options);
 }
 
-// 2. Everything else, llvm-project last (a clang/lld training run trains its profile right before building it).
-//    A libs-only training run stops after step 1: there's nothing left to train.
 const libsTrainingOnly = settings.pgoTraining && settings.pgo.has("libs") && !llvmPgo();
 if (!libsTrainingOnly) {
     await buildRepos(options);

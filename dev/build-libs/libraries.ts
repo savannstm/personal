@@ -12,13 +12,10 @@ import {
     RELEASE_TOOLCHAIN,
     ROOT,
     settings,
-    WIN,
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
-// FFmpeg variants (--ffmpeg-variants), each installed to `${prefix}/ffmpeg-<name>`. `consumers` are the
-// [CMake PROJECT_NAME, cache variable] pairs that the generated ffmpeg-root-*.cmake points at the variant.
 export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [string, string][] }> = {
     rap: {
         codecs: "--enable-decoder=aac,ac3,alac,dca,eac3,flac,mp3float,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,truehd,vorbis --enable-demuxer=aac,ac3,aiff,avi,caf,dts,eac3,flac,matroska,mov,mp3,ogg,truehd,wav --enable-parser=aac,ac3,dca,flac,mlp,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
@@ -38,8 +35,6 @@ export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [strin
     },
 };
 
-// ffmpeg: its CLI generates the PGO ffmpeg trainer's inputs.
-/** Runs `build` with the library profile (-fprofile-use) taken out of the compiler flags in the environment. */
 async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
     const names = ["CFLAGS", "CXXFLAGS", "LDFLAGS"] as const,
         saved = names.map((name) => process.env[name]);
@@ -55,21 +50,15 @@ async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
 
 export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg"];
 
-const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
-#define HAVE_INTTYPES_H 1
-#define HAVE_LIBDLLOADER 1
+const LIBLTDL_COMMON = `#define HAVE_INTTYPES_H 1
 #define HAVE_PRELOADED_SYMBOLS 1
 #define HAVE_STDINT_H 1
 #define HAVE_STDIO_H 1
 #define HAVE_STDLIB_H 1
 #define HAVE_SYS_STAT_H 1
 #define HAVE_SYS_TYPES_H 1
-#define LTDL_DLOPEN_DEPLIBS 1
 #define LT_DLSEARCH_PATH "/lib:/usr/lib"
-#define LT_LIBEXT "lib"
 #define LT_LIBPREFIX "lib"
-#define LT_MODULE_EXT ".dll"
-#define LT_MODULE_PATH_VAR "PATH"
 #define LT_OBJDIR ".libs/"
 #define PACKAGE "libltdl"
 #define PACKAGE_BUGREPORT "bug-libtool@gnu.org"
@@ -80,78 +69,25 @@ const LIBLTDL_MSVC_CONFIG = `#define HAVE_DECL_CYGWIN_CONV_PATH 0
 #define PACKAGE_VERSION "2.4.3a"
 #define STDC_HEADERS 1
 #define VERSION "2.4.3a"
-#define __error_t_defined 1
 #define error_t int`;
-const LIBLTDL_MINGW_CONFIG = `
-#define HAVE_CLOSEDIR 1
+const LIBLTDL_WINDOWS = `
 #define HAVE_DECL_CYGWIN_CONV_PATH 0
-#define HAVE_DIRENT_H 1
-#define HAVE_INTTYPES_H 1
 #define HAVE_LIBDLLOADER 1
-#define HAVE_OPENDIR 1
-#define HAVE_PRELOADED_SYMBOLS 1
-#define HAVE_READDIR 1
-#define HAVE_STDINT_H 1
-#define HAVE_STDIO_H 1
-#define HAVE_STDLIB_H 1
-#define HAVE_STRINGS_H 1
-#define HAVE_STRING_H 1
-#define HAVE_SYS_STAT_H 1
-#define HAVE_SYS_TYPES_H 1
-#define HAVE_UNISTD_H 1
 #define LTDL_DLOPEN_DEPLIBS 1
-#define LT_DLSEARCH_PATH "/lib:/usr/lib"
 #define LT_LIBEXT "lib"
-#define LT_LIBPREFIX "lib"
 #define LT_MODULE_EXT ".dll"
 #define LT_MODULE_PATH_VAR "PATH"
-#define LT_OBJDIR ".libs/"
-#define PACKAGE "libltdl"
-#define PACKAGE_BUGREPORT "bug-libtool@gnu.org"
-#define PACKAGE_NAME "libltdl"
-#define PACKAGE_STRING "libltdl 2.4.3a"
-#define PACKAGE_TARNAME "libltdl"
-#define PACKAGE_URL ""
-#define PACKAGE_VERSION "2.4.3a"
-#define STDC_HEADERS 1
-#define VERSION "2.4.3a"
-#define __error_t_defined 1
-#define error_t int`;
-const LIBLTDL_LINUX_CONFIG = `
-#define HAVE_ARGZ_H 1
+#define __error_t_defined 1`;
+const LIBLTDL_DIRENT = `
 #define HAVE_CLOSEDIR 1
 #define HAVE_DIRENT_H 1
-#define HAVE_DLFCN_H 1
-#define HAVE_DLERROR 1
-#define HAVE_INTTYPES_H 1
-#define HAVE_LIBDL 1
 #define HAVE_OPENDIR 1
-#define HAVE_PRELOADED_SYMBOLS 1
 #define HAVE_READDIR 1
-#define HAVE_STDINT_H 1
-#define HAVE_STDIO_H 1
-#define HAVE_STDLIB_H 1
 #define HAVE_STRINGS_H 1
 #define HAVE_STRING_H 1
-#define HAVE_SYS_STAT_H 1
-#define HAVE_SYS_TYPES_H 1
-#define HAVE_UNISTD_H 1
-#define LT_DLSEARCH_PATH "/lib:/usr/lib"
-#define LT_LIBEXT "so"
-#define LT_LIBPREFIX "lib"
-#define LT_MODULE_EXT ".so"
-#define LT_MODULE_PATH_VAR "LD_LIBRARY_PATH"
-#define LT_OBJDIR ".libs/"
-#define PACKAGE "libltdl"
-#define PACKAGE_BUGREPORT "bug-libtool@gnu.org"
-#define PACKAGE_NAME "libltdl"
-#define PACKAGE_STRING "libltdl 2.4.3a"
-#define PACKAGE_TARNAME "libltdl"
-#define PACKAGE_URL ""
-#define PACKAGE_VERSION "2.4.3a"
-#define STDC_HEADERS 1
-#define VERSION "2.4.3a"
-#define error_t int`;
+#define HAVE_UNISTD_H 1`;
+const LIBLTDL_MSVC_CONFIG = LIBLTDL_COMMON + LIBLTDL_WINDOWS;
+const LIBLTDL_MINGW_CONFIG = LIBLTDL_COMMON + LIBLTDL_WINDOWS + LIBLTDL_DIRENT;
 
 export const LIBRARIES: Library[] = [
     // --- Tier 0: no dependencies on anything else in this list ---
@@ -187,35 +123,30 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // Only libltdl, compiled directly with a hand-written config.h.
         name: "libtool",
         source: { git: "https://github.com/autotools-mirror/libtool", tag: "v2.6.2" },
         profile: { pgo: false },
         msys2: "libtool",
         prepare: async ({ path }) => {
-            if (WIN) {
-                await $`sd -s -- "extern LT_DLSYM_CONST lt_dlsymlist preloaded_symbols[]" "extern LT_DLSYM_CONST lt_dlsymlist* preloaded_symbols = NULL" libltdl/ltdl.c`.cwd(
-                    path,
-                );
-                await $`sd -s -- "LT_SCOPE const lt_dlvtable *	get_vtable (lt_user_data data);" "LT_SCOPE const lt_dlvtable *	get_vtable (lt_user_data data);\nLT_SCOPE const lt_dlvtable *	loadlibrary_LTX_get_vtable (lt_user_data data);" libltdl/ltdl.c`.cwd(
-                    path,
-                );
-                await $`sd -s -- "errors += loader_init (get_vtable, 0);" "errors += loader_init (get_vtable, 0);\nerrors += loader_init (loadlibrary_LTX_get_vtable, 0);" libltdl/ltdl.c`.cwd(
-                    path,
-                );
-                await $`sd -s -- "errors += lt_dlpreload_open (LT_STR(LTDLOPEN), loader_init_callback);" "" libltdl/ltdl.c`.cwd(
-                    path,
-                );
-            }
+            await $`sd -s -- "extern LT_DLSYM_CONST lt_dlsymlist preloaded_symbols[]" "extern LT_DLSYM_CONST lt_dlsymlist* preloaded_symbols = NULL" libltdl/ltdl.c`.cwd(
+                path,
+            );
+            await $`sd -s -- "LT_SCOPE const lt_dlvtable *	get_vtable (lt_user_data data);" "LT_SCOPE const lt_dlvtable *	get_vtable (lt_user_data data);\nLT_SCOPE const lt_dlvtable *	loadlibrary_LTX_get_vtable (lt_user_data data);" libltdl/ltdl.c`.cwd(
+                path,
+            );
+            await $`sd -s -- "errors += loader_init (get_vtable, 0);" "errors += loader_init (get_vtable, 0);\nerrors += loader_init (loadlibrary_LTX_get_vtable, 0);" libltdl/ltdl.c`.cwd(
+                path,
+            );
+            await $`sd -s -- "errors += lt_dlpreload_open (LT_STR(LTDLOPEN), loader_init_callback);" "" libltdl/ltdl.c`.cwd(
+                path,
+            );
         },
         build: async ({ isDebug, msvc, path }) => {
-            const p = `${path}/libltdl`;
+            const p = `${path}/libltdl`,
+                config = msvc ? LIBLTDL_MSVC_CONFIG : LIBLTDL_MINGW_CONFIG;
 
             await cp(`${p}/libltdl/lt__argz_.h`, `${p}/lt__argz.h`);
-            await writeFile(
-                `${p}/config.h`,
-                WIN ? (msvc ? LIBLTDL_MSVC_CONFIG : LIBLTDL_MINGW_CONFIG) : LIBLTDL_LINUX_CONFIG,
-            );
+            await writeFile(`${p}/config.h`, config);
 
             await buildPlain(p, isDebug, {
                 defines: ["HAVE_CONFIG_H", "LTDL", isDebug ? "DLL_EXPORT" : "LTDL", "LT_DEBUG_LOADERS"],
@@ -237,12 +168,12 @@ export const LIBRARIES: Library[] = [
                     msvc ? "lt__dirent.c" : "",
                     "slist.c",
                     "loaders/preopen.c",
-                    WIN ? "loaders/loadlibrary.c" : "loaders/dlopen.c",
+                    "loaders/loadlibrary.c",
                 ],
             });
         },
         finish: async ({ isDebug, root }) => {
-            if (WIN && isDebug) {
+            if (isDebug) {
                 await $`sd -s -- "defined LIBLTDL_DLL_IMPORT" "1" ${`${root}/include/libltdl/lt_system.h`}`;
             }
         },
@@ -254,7 +185,6 @@ export const LIBRARIES: Library[] = [
         msys2: "bzip2",
         prepare: async ({ path }) => {
             await $`sd "DESCRIPTION.+" "" libbz2.def`.cwd(path);
-            // LIBRARY sets the DLL name recorded in the import lib; upstream's LIBBZ2 makes consumers load LIBBZ2.dll.
             await $`sd "LIBRARY.+" "LIBRARY bz2" libbz2.def`.cwd(path);
         },
         build: async ({ isDebug, path }) => {
@@ -296,8 +226,12 @@ export const LIBRARIES: Library[] = [
             await $`sd -s -- "set(NOLTOFLAG \${ZNOLTOFLAG})" "" CMakeLists.txt`.cwd(path);
         },
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && isDebug) {
-                await (msvc ? copyLib(root, "zlib.lib", "z.lib") : copyLib(root, "libzlib.dll.a", "libz.dll.a"));
+            if (isDebug) {
+                if (msvc) {
+                    await copyLib(root, "zlib.lib", "z.lib");
+                } else {
+                    await copyLib(root, "libzlib.dll.a", "libz.dll.a");
+                }
             }
         },
     },
@@ -328,7 +262,6 @@ export const LIBRARIES: Library[] = [
         name: "highway",
         source: { git: "https://github.com/google/highway", tag: "1.4.0" },
         msys2: "highway",
-        // HWY_COMPILE_ONLY_STATIC: no runtime dispatch; the x86-64-v3 baseline (AVX2) is the only target
         args: ({ isDebug }) =>
             `-DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_TESTS=OFF -DHWY_FORCE_STATIC_LIBS=${cmakeVal(!isDebug)} -DCMAKE_CXX_FLAGS=-DHWY_COMPILE_ONLY_STATIC`,
         prepare: async ({ path }) => {
@@ -349,7 +282,7 @@ export const LIBRARIES: Library[] = [
             }
         },
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/lzma.h`);
             }
         },
@@ -361,7 +294,7 @@ export const LIBRARIES: Library[] = [
         args: ({ isDebug }) =>
             `-DLIBDEFLATE_COMPRESSION_SUPPORT=ON -DLIBDEFLATE_DECOMPRESSION_SUPPORT=ON -DLIBDEFLATE_ZLIB_SUPPORT=ON -DLIBDEFLATE_GZIP_SUPPORT=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF -DLIBDEFLATE_BUILD_STATIC_LIB=${cmakeVal(!isDebug)} -DLIBDEFLATE_BUILD_SHARED_LIB=${cmakeVal(isDebug)}`,
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/libdeflate.h`);
             }
         },
@@ -396,10 +329,8 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, msvc, root }) => {
             if (!isDebug) {
-                if (WIN) {
-                    await stripDllImport(`${root}/include/pcre2.h`);
-                    await $`sd -s -- "STATIC IMPORTED" "STATIC IMPORTED GLOBAL" ${`${root}/lib/cmake/pcre2/pcre2-targets.cmake`}`;
-                }
+                await stripDllImport(`${root}/include/pcre2.h`);
+                await $`sd -s -- "STATIC IMPORTED" "STATIC IMPORTED GLOBAL" ${`${root}/lib/cmake/pcre2/pcre2-targets.cmake`}`;
                 return;
             }
 
@@ -423,7 +354,7 @@ export const LIBRARIES: Library[] = [
         args: ({ isDebug }) =>
             `-DBUILD_LUTS_GENERATOR=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_CODEC=OFF -DBUILD_JPIP=OFF -DBUILD_VIEWER=OFF -DBUILD_JAVA=OFF -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)}`,
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !isDebug && msvc) {
+            if (!isDebug && msvc) {
                 await stripDllImport(`${root}/include/openjpeg-2.5/openjpeg.h`);
             }
         },
@@ -441,7 +372,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DPYTHON=OFF -DPYBIND11=OFF -DBUILD_WEBSITE=OFF -DIMATH_HALF_USE_LOOKUP_TABLE=ON -DIMATH_USE_DEFAULT_VISIBILITY=OFF -DIMATH_ENABLE_LARGE_STACK=OFF -DIMATH_USE_NOEXCEPT=OFF -DIMATH_INSTALL_PKG_CONFIG=ON`,
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !msvc && isDebug) {
+            if (!msvc && isDebug) {
                 await $`sd -s "/// @cond Doxygen_Suppress" "/*" ${`${root}/include/Imath/ImathVec.h`}`;
                 await $`sd -s "/// @endcond Doxygen_Suppress" "*/" ${`${root}/include/Imath/ImathVec.h`}`;
             }
@@ -464,7 +395,7 @@ export const LIBRARIES: Library[] = [
         msys2: "openh264",
         args: () => "-Dtests=disabled",
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !isDebug && msvc) {
+            if (!isDebug && msvc) {
                 await copyLib(root, "libopenh264.a", "openh264.lib");
             }
         },
@@ -477,7 +408,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             "-Denable_asm=true -Denable_tools=false -Denable_examples=false -Denable_tests=false -Denable_seek_stress=false -Denable_docs=false -Dlogging=false -Dtestdata_tests=false -Dfuzzing_engine=none -Dtrim_dsp=true",
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !isDebug && msvc) {
+            if (!isDebug && msvc) {
                 await copyLib(root, "libdav1d.a", "dav1d.lib");
             }
         },
@@ -489,16 +420,14 @@ export const LIBRARIES: Library[] = [
         args: () => "-DBUILD_TESTS=OFF -DUSE_CRYPTO=OFF -DBUILD_KVAZAAR_BINARY=OFF",
         prepare: async ({ msvc, path }) => {
             await applyPatch(path, "kvazaar-install.patch");
-            if (WIN) {
-                if (msvc) {
-                    await applyPatch(path, "kvazaar-cmakelists.patch");
-                } else {
-                    await $`sd -s -- "-Wa,-muse-unaligned-vector-move" "" CMakeLists.txt`.cwd(path);
-                }
+            if (msvc) {
+                await applyPatch(path, "kvazaar-cmakelists.patch");
+            } else {
+                await $`sd -s -- "-Wa,-muse-unaligned-vector-move" "" CMakeLists.txt`.cwd(path);
             }
         },
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/kvazaar.h`);
             }
         },
@@ -523,7 +452,6 @@ export const LIBRARIES: Library[] = [
             `-DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF -DGLFW_INSTALL=ON -DGLFW_LIBRARY_TYPE=${isDebug ? "SHARED" : "STATIC"}`,
     },
     {
-        // Autotools build of icu4c, with the data trimmed by patches/filters.json.
         name: "icu",
         source: { git: "https://github.com/unicode-org/icu", tag: "release-79.1" },
         profile: { rtti: true },
@@ -558,19 +486,17 @@ export const LIBRARIES: Library[] = [
             await writeFile(`${sourceDir}/filters.json`, ICU_DATA_FILTERS);
             const common = `--enable-option-checking --disable-tests --disable-samples --enable-tools --disable-icu-config --disable-extras --disable-icuio --disable-layout --disable-layoutex --disable-dyload --disable-fuzzer --disable-tracing --disable-plugins --disable-draft --with-library-suffix=""`;
 
+            const icuPlatform = msvc ? "Cygwin" : "MinGW";
+
             await buildAutoconf(sourceDir, isDebug, root, {
                 args: `${common} --with-data-packaging=${isDebug ? "library" : "static"}`,
-                configure: `./runConfigureICU ${WIN ? (msvc ? "Cygwin" : "MinGW") : "Linux/clang"}`,
+                configure: `./runConfigureICU ${icuPlatform}`,
                 env: `ICU_DATA_FILTER_FILE=filters.json CPPFLAGS="-DUCONFIG_NO_COLLATION=ON -DUCONFIG_NO_FORMATTING=ON -DUCONFIG_NO_TRANSLITERATION=ON -DUCONFIG_NO_REGULAR_EXPRESSIONS=ON -DUCONFIG_NO_SERVICE=ON -DUCONFIG_NO_IDNA=ON -DUCONFIG_NO_CONVERSION=OFF -DUCONFIG_NO_LEGACY_CONVERSION=OFF -DUCONFIG_NO_NORMALIZATION=OFF"`,
                 libtool: false,
                 makeEnv: msvc ? `MSYS2_ARG_CONV_EXCL="*"` : "",
             });
         },
         finish: async ({ isDebug, msvc, path, root }) => {
-            if (!WIN) {
-                return;
-            }
-
             if (msvc) {
                 if (isDebug) {
                     await movePdbs(`${path}/icu4c/source/bin`, `${root}/bin`);
@@ -598,7 +524,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DUSE_IWYU=OFF -DENABLE_SDL=OFF -DENABLE_SIMD=ON -DENABLE_AVX2=ON -DENABLE_AVX512=OFF -DENABLE_DECODER=OFF -DENABLE_ENCODER=OFF -DENABLE_SHERLOCK265=OFF -DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF -DWITH_FUZZERS=OFF -DFORCE_FULL_VISIBILITY=OFF`,
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/libde265/de265.h`);
             }
         },
@@ -643,7 +569,7 @@ export const LIBRARIES: Library[] = [
         msys2: "opencl-icd",
         args: () => `-DOPENCL_ICD_LOADER_BUILD_TESTING=OFF -DENABLE_OPENCL_LAYERINFO=OFF`,
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !isDebug && !msvc) {
+            if (!isDebug && !msvc) {
                 await copyLib(root, "OpenCL.a", "libOpenCL.a");
             }
         },
@@ -685,14 +611,10 @@ export const LIBRARIES: Library[] = [
             await $`sd -s -- "#  error The include path of <zlib.h> is incorrect" "" pngpriv.h`.cwd(path);
         },
         finish: async ({ isDebug, msvc, root }) => {
-            if (!WIN) {
-                return;
-            }
-
-            if (isDebug) {
-                await (msvc
-                    ? copyLib(root, "libpng16.lib", "png16.lib")
-                    : copyLib(root, "libpng16.dll.a", "libpng.dll.a"));
+            if (isDebug && msvc) {
+                await copyLib(root, "libpng16.lib", "png16.lib");
+            } else if (isDebug) {
+                await copyLib(root, "libpng16.dll.a", "libpng.dll.a");
             } else if (msvc) {
                 await copyLib(root, "libpng.lib", "png16.lib");
             }
@@ -719,10 +641,6 @@ export const LIBRARIES: Library[] = [
         },
         msys2: "libraw",
         build: async ({ isDebug, path, root }) => {
-            if (!WIN) {
-                await $`chmod +x configure`.cwd(path);
-            }
-
             await buildAutoconf(path, isDebug, root, {
                 args: `--enable-openmp --enable-jpeg --enable-zlib --enable-lcms --disable-examples`,
                 env: `CPPFLAGS="${isDebug ? "-DLIBRAW_BUILDLIB" : "-DLIBRAW_NODLL"}"`,
@@ -817,7 +735,7 @@ export const LIBRARIES: Library[] = [
         args: ({ isDebug }) =>
             `-DFLTK_BUILD_SHARED_LIBS=OFF -DFLTK_USE_SYSTEM_ZLIB=ON -DFLTK_USE_SYSTEM_LIBPNG=ON -DFLTK_USE_SYSTEM_LIBJPEG=ON -DFLTK_OPTION_SVG=OFF -DFLTK_BUILD_FLUID=OFF -DFLTK_BUILD_FLTK_OPTIONS=OFF -DFLTK_BUILD_GL=ON -DFLTK_BUILD_FORMS=OFF -DFLTK_BUILD_TEST=OFF -DFLTK_BUILD_HTML_DOCS=OFF -DFLTK_OPTION_PEN_SUPPORT=OFF -DFLTK_OPTION_LARGE_FILE=OFF -DFLTK_OPTION_PRINT_SUPPORT=OFF -DFLTK_OPTION_FILESYSTEM_SUPPORT=ON -DFLTK_OPTION_STD=ON -DFLTK_GRAPHICS_GDIPLUS=ON -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/FL/Fl_Export.H`);
             }
         },
@@ -833,7 +751,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-Dglib=disabled -Dgobject=disabled -Dcairo=disabled -Dchafa=disabled -Dicu=disabled -Dgraphite2=disabled -Dfreetype=enabled -Ddirectwrite=enabled -Dgdi=disabled -Draster=disabled -Dvector=disabled -Dgpu=disabled -Dgpu_demo=disabled -Dtests=disabled -Dutilities=disabled -Dintrospection=disabled -Ddocs=disabled`,
         finish: async ({ isDebug, msvc, root }) => {
-            if (WIN && !isDebug && msvc) {
+            if (!isDebug && msvc) {
                 await copyLib(root, "libharfbuzz.a", "harfbuzz.lib");
             }
         },
@@ -849,7 +767,7 @@ export const LIBRARIES: Library[] = [
             await $`sd -s "find_package(GIF 5.1)" "" lib/jxl_extras.cmake`.cwd(path);
         },
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/jxl/jxl_export.h`);
             }
         },
@@ -861,7 +779,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_OPENSSL=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=ON -DENABLE_ZSTD=OFF -DENABLE_ZLIB=OFF -DENABLE_BZip2=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_WIN32_XMLLITE=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF -DENABLE_CNG=ON -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_XATTR=OFF -DENABLE_ACL=OFF -DENABLE_ICONV=OFF -DENABLE_TEST=OFF -DENABLE_COVERAGE=OFF -DENABLE_WERROR=OFF -DPOSIX_REGEX_LIB=NONE`,
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/archive.h`);
                 await stripDllImport(`${root}/include/archive_entry.h`);
             }
@@ -880,7 +798,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DWITH_EXAMPLES=OFF -DWITH_EXAMPLE_HEIF_THUMB=OFF -DWITH_EXAMPLE_HEIF_VIEW=OFF -DWITH_GDK_PIXBUF=OFF -DENABLE_PLUGIN_LOADING=OFF -DWITH_LIBDE265=ON -DWITH_X265=OFF -DWITH_KVAZAAR=ON -DWITH_UVG266=OFF -DWITH_VVDEC=OFF -DWITH_VVENC=OFF -DWITH_X264=OFF -DWITH_OpenH264_DECODER=ON -DWITH_DAV1D=ON -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF -DWITH_SvtEnc=OFF -DWITH_RAV1E=ON -DWITH_JPEG_DECODER=ON -DWITH_JPEG_ENCODER=OFF -DWITH_OpenJPEG_ENCODER=OFF -DWITH_OpenJPEG_DECODER=ON -DWITH_FFMPEG_DECODER=OFF -DWITH_OPENJPH_ENCODER=OFF -DWITH_UNCOMPRESSED_CODEC=OFF -DWITH_WEBCODECS=OFF -DWITH_LIBSHARPYUV=ON -DBUILD_DOCUMENTATION=OFF`,
         finish: async ({ isDebug, root }) => {
-            if (WIN && !isDebug) {
+            if (!isDebug) {
                 await stripDllImport(`${root}/include/libheif/heif_export.h`);
             }
         },
@@ -890,7 +808,6 @@ export const LIBRARIES: Library[] = [
         name: "mesa",
         source: { git: "https://gitlab.freedesktop.org/mesa/mesa", tag: "mesa-26.2.6" },
         build: "meson",
-        // Only mesa's build scripts import these Python modules.
         mesonCommand: ["uv", "run", "--with", "mako,setuptools,pyyaml", "meson"],
         args: () =>
             `-Dplatforms=windows -Degl=enabled -Degl-native-platform=surfaceless -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglx=disabled -Dgallium-drivers=d3d12 -Dgallium-d3d12-graphics=enabled -Dgallium-d3d12-video=disabled -Dvulkan-drivers= -Dllvm=disabled -Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzlib=disabled -Dzstd=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Ddisplay-info=disabled -Dmicrosoft-clc=disabled -Dspirv-to-dxil=false -Dbuild-tests=false -Dhtml-docs=disabled -Dmin-windows-version=10 -Dvideo-codecs=`,
@@ -900,9 +817,6 @@ export const LIBRARIES: Library[] = [
                 await $`sd -s -- "_interlockedexchangeadd64" "_InterlockedExchangeAdd64" src/util/u_atomic.h`.cwd(path);
                 await $`sd -s -- "_interlockeddecrement64" "_InterlockedDecrement64" src/util/u_atomic.h`.cwd(path);
                 await $`sd -s -- "_interlockedincrement64" "_InterlockedIncrement64" src/util/u_atomic.h`.cwd(path);
-                // _InterlockedAdd/_InterlockedAdd8/_InterlockedAdd16/64 are ARM64-only
-                // intrinsics and aren't defined for x86_64; rewrite p_atomic_add_return
-                // to use the (defined) ExchangeAdd variants plus the delta instead.
                 const shimOld =
                         "__forceinline char _interlockedadd8(char volatile * _Addend, char _Value)\n{\n   return _InterlockedExchangeAdd8(_Addend, _Value) + _Value;\n}\n\n__forceinline short _interlockedadd16(short volatile * _Addend, short _Value)\n{\n   return _InterlockedExchangeAdd16(_Addend, _Value) + _Value;\n}\n\n",
                     addLines: [string, string][] = [
@@ -929,27 +843,15 @@ export const LIBRARIES: Library[] = [
                     await $`sd -s -- ${from} ${to} src/util/u_atomic.h`.cwd(path);
                 }
 
-                // MSVC's CRT math.h only defines M_PI/M_LOG2E/etc. when
-                // _USE_MATH_DEFINES is set before it's included; NIR's builtin
-                // builder relies on them being available unconditionally.
                 const preArgsOld = `'-DPACKAGE_BUGREPORT="https://gitlab.freedesktop.org/mesa/mesa/-/issues"',`,
                     preArgsNew = `${preArgsOld}\n  '-D_USE_MATH_DEFINES',`;
 
                 await $`sd -s -- ${preArgsOld} ${preArgsNew} meson.build`.cwd(path);
             }
 
-            if (WIN) {
-                // include/meson.build only installs the Khronos GL/GLES/EGL headers
-                // (EGL/egl.h, eglext.h, eglplatform.h, ...) when the host isn't
-                // Windows - the non-upstream eglext_angle.h/eglmesaext.h pair a few
-                // lines down has no such guard, so a Windows build ends up with
-                // those two but not the base egl.h that consumers (e.g. libultrahdr's
-                // find_package(EGL)) actually look for. Drop the Windows exclusion so
-                // the full header set gets installed everywhere with_egl is on.
-                await $`sd -s -- ${"if not with_glvnd and host_machine.system() != 'windows'"} ${"if not with_glvnd"} include/meson.build`.cwd(
-                    path,
-                );
-            }
+            await $`sd -s -- ${"if not with_glvnd and host_machine.system() != 'windows'"} ${"if not with_glvnd"} include/meson.build`.cwd(
+                path,
+            );
         },
     },
     */
@@ -961,40 +863,30 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DUHDR_BUILD_EXAMPLES=OFF -DUHDR_ENABLE_INTRINSICS=ON -DUHDR_ENABLE_GLES=OFF -DUHDR_ENABLE_HEIF=OFF`,
         prepare: async ({ path }) => {
-            if (WIN) {
-                await $`sd -s -- ${"if(MSVC AND NOT BUILD_SHARED_LIBS)"} ${"if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)"} CMakeLists.txt`.cwd(
-                    path,
-                );
-                await $`sd -s -- ${"if(BUILD_SHARED_LIBS AND NOT MSVC)"} ${"if(BUILD_SHARED_LIBS AND NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
-                    path,
-                );
-                await $`sd -s -- ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT MSVC)"} ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
-                    path,
-                );
-                await $`sd -s -- ${"$<$<CONFIG:Debug>:Debug>"} "" CMakeLists.txt`.cwd(path);
-            }
+            await $`sd -s -- ${"if(MSVC AND NOT BUILD_SHARED_LIBS)"} ${"if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)"} CMakeLists.txt`.cwd(
+                path,
+            );
+            await $`sd -s -- ${"if(BUILD_SHARED_LIBS AND NOT MSVC)"} ${"if(BUILD_SHARED_LIBS AND NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
+                path,
+            );
+            await $`sd -s -- ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT MSVC)"} ${"combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT (MSVC OR WIN32))"} CMakeLists.txt`.cwd(
+                path,
+            );
+            await $`sd -s -- ${"$<$<CONFIG:Debug>:Debug>"} "" CMakeLists.txt`.cwd(path);
         },
     },
 
-    // --- End-user apps, excluded from dependency ordering ---
     {
-        // One minimal build per FFmpeg variant (--ffmpeg-variants), each into `${prefix}/ffmpeg-<variant>`.
         name: "ffmpeg",
         source: { git: "https://github.com/FFmpeg/FFmpeg", tag: "n9.1" },
         profile: { asan: true, debugOpt: false },
         prepare: async ({ msvc, path }) => {
-            // Upstream 9.0 treats any lld-link "ignoring unknown argument" warning as a
-            // hard failure in test_ld, which kills the compiler sanity check outright
-            // for any -Wl,* flag the local LLD doesn't recognize. Revert to exit-code-only.
+            // Upstream 9.0 treats any lld-link "ignoring unknown argument" warning as a hard failure
             await $`sd -s -- ${`test $ret -eq 0 && ! echo "$output" | grep -qE 'LNK4044|lld-link: warning: ignoring unknown argument'`} ${"test $ret -eq 0"} configure`.cwd(
                 path,
             );
 
-            // mlpdsp_init.c defines the ff_mlp_firorder_*/ff_mlp_iirorder_* jump labels inside an inline-asm block and
-            // references them from C. With -flto=full the C reference becomes an undefined external in the bitcode and
-            // the labels only exist as local symbols after late codegen, so linking against avcodec.lib fails with
-            // "undefined symbol: ff_mlp_firorder_*" unless /FORCE:UNRESOLVED is passed. Building this one object
-            // without LTO keeps the assembler resolving the labels locally, as it does in a regular build.
+            // With -flto=full the C reference becomes an undefined external in the bitcode
             await appendFile(`${path}/libavcodec/x86/Makefile`, "\n$(SUBDIR)x86/mlpdsp_init.o: CFLAGS += -fno-lto\n");
 
             if (msvc) {
@@ -1008,8 +900,11 @@ export const LIBRARIES: Library[] = [
             }
         },
         build: async ({ isDebug, msvc, path, root, step }) => {
-            const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, RANLIB, STRIP, WINDRES } = process.env,
-                common = `--target-os=${WIN ? (msvc ? "win64" : "mingw32") : "linux"} --arch=x86_64 --cpu=x86-64-v3 ${msvc ? "--toolchain=msvc" : ""} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
+            const { AR, CC, CFLAGS, CXX, CXXFLAGS, LDFLAGS, RANLIB, STRIP, WINDRES } = process.env;
+
+            const targetOs = msvc ? "win64" : "mingw32",
+                msvcToolchain = msvc ? "--toolchain=msvc" : "",
+                common = `--target-os=${targetOs} --arch=x86_64 --cpu=x86-64-v3 ${msvcToolchain} --stdc=gnu17 --stdcxx=gnu++23 --cc=${CC} --cxx=${CXX} --ar=${AR} --strip=${STRIP} --ld=${CC} --ranlib=${RANLIB} --windres=${WINDRES} --disable-autodetect --disable-all --enable-asm --enable-protocol=file --enable-avformat --enable-avcodec --enable-avfilter --enable-swscale --enable-swresample --extra-cflags="${CFLAGS}" --extra-ldflags="${LDFLAGS}" --extra-cxxflags="${CXXFLAGS}" --optflags="${CFLAGS}"`,
                 buildType = isDebug
                     ? "--disable-optimizations --enable-debug --disable-stripping"
                     : "--enable-optimizations --disable-debug --enable-stripping";
@@ -1030,15 +925,11 @@ export const LIBRARIES: Library[] = [
         },
     },
     {
-        // One build per ImageMagick variant (--magick-variants).
         name: "imagemagick",
         source: { git: "https://github.com/imagemagick/imagemagick", tag: "7.1.2-36" },
         profile: { asan: true, debugOpt: false },
         prepare: async ({ msvc, path }) => {
-            // Swaps GPL FFTW3 for BSD-licensed PocketFFT, amalgamated into fourier.c. Safe to
-            // git apply exactly once here: buildVariants resets the tree hard before prepare runs.
-            // Also subsumes the old MAGICKCORE_HAVE_COMPLEX_H / HAVE_C{ABS,ARG,IMAG,REAL} rewrites,
-            // since the patch undefines the former and defines the latter four outright.
+            // Swaps GPL FFTW3 for BSD-licensed PocketFFT
             await applyPatch(path, "imagemagick-fourier-pocketfft.patch");
 
             if (msvc) {
@@ -1050,32 +941,25 @@ export const LIBRARIES: Library[] = [
             }
         },
         build: async ({ isDebug, path, root, step }) => {
-            // fourier.c is patched to #include this instead of linking GPL FFTW3, and the copy has
-            // to happen here rather than in prepare: buildVariants runs `git clean -fdx` per variant
-            // after prepare, which would delete these as untracked files.
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.c`} MagickCore/pocketfft.c`.cwd(path);
             await $`cp ${`${ROOT}/patches/imagemagick/pocketfft.h`} MagickCore/pocketfft.h`.cwd(path);
 
             for (const variant of settings.magickVariants) {
                 const { depth, hdri } = variant,
                     hdr = hdri ? "enable" : "disable",
-                    // Only the PGO variant is trained and gets the library profile: the others (Q8) are built without it, and
-                    // not at all while the profile is being trained.
                     profiled = magickSuffix(variant) === magickSuffix(MAGICK_PGO_VARIANT);
                 if (!profiled && settings.libsPgo === "gen") {
                     continue;
                 }
-                const build = <T>(run: () => Promise<T>) =>
-                    profiled || settings.libsPgo !== "use" ? run() : withoutLibsProfile(run);
-                await step(`q${depth}-${hdr}-hdri`, () =>
-                    build(() =>
-                        buildAutoconf(path, isDebug, root, {
-                            args:
-                                `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${depth} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl ` +
-                                "--with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32",
-                        }),
-                    ),
-                );
+                const args = `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${depth} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl --with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32`;
+                const buildVariant = () => buildAutoconf(path, isDebug, root, { args });
+                await step(`q${depth}-${hdr}-hdri`, async () => {
+                    if (profiled || settings.libsPgo !== "use") {
+                        await buildVariant();
+                    } else {
+                        await withoutLibsProfile(buildVariant);
+                    }
+                });
             }
         },
         finish: async ({ isDebug, msvc, path, root }) => {
@@ -1100,12 +984,16 @@ export const LIBRARIES: Library[] = [
         profile: { asan: true, debugOpt: false, rtti: true },
         build: async ({ isDebug, msvc, path }) => {
             const submodules = ["qtbase", "qtimageformats", "qttools", "qtsvg"],
-                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${WIN ? "windows" : "xcb;wayland"}" ${msvc ? "" : "-reduce-exports"} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${WIN ? "-ssl -schannel -no-openssl" : "-no-ssl -no-openssl -no-schannel"} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${!WIN ? "-no-glib -no-evdev -no-mtdev -no-tslib -no-eglfs -no-linuxfb -no-gtk -xcb-xlib -libudev -libinput -opengl -egl" : "-opengl desktop -no-egl"}`,
-                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -no-feature-linguist -feature-rubberband -feature-style-stylesheet ${WIN ? "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista" : ""} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-harmonydeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt ${!WIN ? "-no-feature-wayland-client-wl-shell -no-feature-liburing -no-feature-xlib -feature-system-xcb-xinput -no-feature-vnc" : ""} -no-feature-vulkan`;
+                qpa = "windows",
+                reduceExports = msvc ? "" : "-reduce-exports",
+                ssl = "-ssl -schannel -no-openssl",
+                graphics = "-opengl desktop -no-egl",
+                winStyles = "-feature-style-windows -feature-style-windows11 -feature-style-windowsvista",
+                common = `-no-guess-compiler -cmake-generator Ninja -c++std c++23 -gui -widgets -submodules ${submodules.join(",")} -pch -qpa "${qpa}" ${reduceExports} -disable-deprecated-up-to 0x060213 -nomake tests -nomake examples -nomake benchmarks -nomake manual-tests -nomake minimal-static-tests -nomake doc-snippets  -no-emojisegmenter -no-appstore-compliant -no-sbom -no-sbom-json -no-sbom-verify -no-system-proxies -no-mimetype-database -no-icu -no-gif -no-dbus ${ssl} -no-libb2 -system-harfbuzz -system-freetype -system-libpng -system-libjpeg -system-webp -system-zlib -system-doubleconversion -system-pcre -system-libmd4c -no-tiff -no-jasper -no-mng -no-zstd ${graphics}`,
+                featureToggles = `-feature-accessibility -feature-animation -feature-calendarwidget -feature-cborstreamreader -feature-cborstreamwriter -feature-datetimeedit -feature-datetimeparser -feature-designer -feature-dom -feature-draganddrop -feature-imageformat_jpeg -feature-imageformat_png -feature-imageformat_xpm -no-feature-linguist -feature-rubberband -feature-style-stylesheet ${winStyles} -feature-texthtmlparser -feature-textmarkdownreader -feature-wizard -no-feature-androiddeployqt -no-feature-appstore-compliant -no-feature-assistant -no-feature-brotli -no-feature-distancefieldgenerator -no-feature-dnslookup -no-feature-dtls -no-feature-effects -no-feature-emojisegmenter -no-feature-fullqthelp -no-feature-gestures -no-feature-gssapi -no-feature-hijricalendar -no-feature-imageformat_bmp -no-feature-imageformat_ppm -no-feature-imageformat_xbm -no-feature-islamiccivilcalendar -no-feature-jalalicalendar -no-feature-kmap2qmap -no-feature-macdeployqt -no-feature-harmonydeployqt -no-feature-movie -no-feature-ocsp -no-feature-openssl-hash -no-feature-pdf -no-feature-pixeltool -no-feature-printsupport -no-feature-qdbus -no-feature-qdoc -no-feature-qdoc_coverage -no-feature-qmake -no-feature-qtattributionsscanner -no-feature-qtdiag -no-feature-qtplugininfo -no-feature-sessionmanager -no-feature-socks5 -no-feature-splashscreen -no-feature-sql -no-feature-sspi -no-feature-tabletevent -feature-testlib -no-feature-textmarkdownwriter -no-feature-textodfwriter -no-feature-timezone -no-feature-timezone_locale -no-feature-timezone_tzdb -no-feature-topleveldomain -no-feature-tuiotouch -no-feature-udpsocket -no-feature-wasm-exceptions -no-feature-wasm-jspi -no-feature-wasm-simd128 -no-feature-wasmdeployqt -no-feature-windeployqt -no-feature-vulkan`;
 
             await $`git submodule update --init --depth 1 ${submodules}`.cwd(path);
             await $`git submodule update --init --recursive --depth 1`.cwd(`${path}/qttools`);
-            // qlalr and qvkgen (Vulkan is off) have no feature switch; tracegen/tracepointgen only serve the lttng/etw/ctf features, which are off.
             await applyPatch(`${path}/qtbase`, "qtbase-drop-unused-tools.patch");
 
             if (isDebug) {
@@ -1115,13 +1003,13 @@ export const LIBRARIES: Library[] = [
                     );
                 }
 
-                await $`./configure${raw(WIN ? ".bat" : "")} ${raw(common)} -debug -sanitize address -no-static -no-static-runtime ${raw(featureToggles)} -- -B=debug -DCMAKE_TOOLCHAIN_FILE=${DEBUG_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
+                await $`./configure.bat ${raw(common)} -debug -sanitize address -no-static -no-static-runtime ${raw(featureToggles)} -- -B=debug -DCMAKE_TOOLCHAIN_FILE=${DEBUG_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
                     path,
                 );
                 await $`cmake --build debug -j`.cwd(path);
                 await $`cmake --install debug`.cwd(path);
             } else {
-                await $`./configure${raw(WIN ? ".bat" : "")} ${raw(common)} -release -static -static-runtime ${raw(featureToggles)} -- -B=release -DCMAKE_TOOLCHAIN_FILE=${RELEASE_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
+                await $`./configure.bat ${raw(common)} -release -static -static-runtime ${raw(featureToggles)} -- -B=release -DCMAKE_TOOLCHAIN_FILE=${RELEASE_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
                     path,
                 );
                 await $`cmake --build release -j`.cwd(path);
@@ -1144,7 +1032,6 @@ export const LIBRARIES: Library[] = [
     ruby("ruby-1.9.3", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p551.tar.gz", "1.9.3-p551"),
     ruby("ruby-1.9.2", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.2-p330.tar.gz", "1.9.2-p330"),
 
-    // --- Last: its lld PGO training links ImageMagick and its libraries ---
     llvmProject,
     llvmRuntimes,
 ];

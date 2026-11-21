@@ -1,6 +1,3 @@
-// The media fixtures of the ffmpeg PGO trainer. They are committed under patches/pgo/fixtures/ffmpeg so CI doesn't encode
-// them; regenerate with `node dev/build-libs/pgo-fixtures.ts` (CLANG64's ffmpeg encodes) after changing this table.
-
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import { extname } from "node:path";
@@ -10,25 +7,16 @@ import { CLANG64, ROOT } from "./settings.ts";
 export const FFMPEG_FIXTURES_DIR = `${ROOT}/patches/pgo/fixtures/ffmpeg`;
 
 export interface FfmpegInput {
-    // ffmpeg encoder arguments.
     codecs: string;
-    // Decoders that can produce frames from the file. The trainer requires a variant that has one of them, and the
-    // file's demuxer, to decode it (a variant that has neither skips the file).
     decoders: string[];
     file: string;
-    // "v"ideo, "a"udio or "av".
     kind: "a" | "av" | "v";
-    // Embed the tags and a cover picture, as a tagged music file has.
     tagged?: boolean;
-    // An encoder binary other than CLANG64's, whose libtheora crashes.
     encoder?: string;
-    // Picture size (default 320x240) and seconds (default: 6 for video, 12 for audio).
     seconds?: number;
     size?: string;
 }
 
-// Mirrors the variants' decoders and demuxers (libraries.ts FFMPEG_VARIANTS).
-// Left out on purpose: MPEG-1/2/4, MS-MPEG4 and WMV/WMA, which the apps only keep for legacy video.
 export const FFMPEG_INPUTS: FfmpegInput[] = [
     { codecs: "-c:v libx264 -preset medium -bf 2 -c:a aac", decoders: ["h264", "aac"], file: "h264.mp4", kind: "av" },
     {
@@ -75,7 +63,6 @@ export const FFMPEG_INPUTS: FfmpegInput[] = [
         file: "vp8.webm",
         kind: "av",
     },
-    // Good quality with an alt-ref frame and compound prediction, as web VP9 has (realtime has neither).
     {
         codecs: "-c:v libvpx-vp9 -b:v 600k -deadline good -cpu-used 2 -auto-alt-ref 1 -lag-in-frames 16 -c:a libopus",
         decoders: ["vp9", "opus"],
@@ -135,7 +122,6 @@ export const FFMPEG_INPUTS: FfmpegInput[] = [
     { codecs: "-c:a adpcm_ms", decoders: ["adpcm_ms"], file: "adpcm-ms.wav", kind: "a", seconds: 3 },
 ];
 
-// The demuxer of each container extension in the table.
 export const FFMPEG_DEMUXERS: Record<string, string> = {
     ".aac": "aac",
     ".ac3": "ac3",
@@ -180,7 +166,8 @@ function generate() {
     run(["-f", "lavfi", "-i", "testsrc2=size=300x300:rate=1:duration=1", "-frames:v", "1", cover]);
 
     for (const { codecs, encoder, file, kind, seconds, size, tagged } of FFMPEG_INPUTS) {
-        const video = [
+        const audioSeconds = seconds ?? (kind === "av" ? 6 : 12),
+            video = [
                 "-f",
                 "lavfi",
                 "-i",
@@ -190,25 +177,26 @@ function generate() {
                 "-f",
                 "lavfi",
                 "-i",
-                `aevalsrc=0.4*sin(2*PI*(440+6*sin(6*t))*t)+0.02*random(0)|0.3*sin(2*PI*1320*t)+0.02*random(1):s=48000:d=${seconds ?? (kind === "av" ? 6 : 12)}`,
-            ],
-            inputs = kind === "v" ? video : kind === "a" ? audio : [...video, ...audio],
-            extra = tagged
-                ? [
-                      "-i",
-                      cover,
-                      "-map",
-                      "0:a",
-                      "-map",
-                      "1:v",
-                      "-c:v",
-                      "copy",
-                      "-disposition:v:0",
-                      "attached_pic",
-                      ...(extname(file) === ".mp3" ? ["-id3v2_version", "3"] : []),
-                      ...TAGS.flatMap((tag) => ["-metadata", tag]),
-                  ]
-                : [];
+                `aevalsrc=0.4*sin(2*PI*(440+6*sin(6*t))*t)+0.02*random(0)|0.3*sin(2*PI*1320*t)+0.02*random(1):s=48000:d=${audioSeconds}`,
+            ];
+
+        let inputs = [...video, ...audio];
+        if (kind === "v") {
+            inputs = video;
+        } else if (kind === "a") {
+            inputs = audio;
+        }
+
+        const extra: string[] = [];
+        if (tagged) {
+            extra.push("-i", cover, "-map", "0:a", "-map", "1:v", "-c:v", "copy", "-disposition:v:0", "attached_pic");
+            if (extname(file) === ".mp3") {
+                extra.push("-id3v2_version", "3");
+            }
+            for (const tag of TAGS) {
+                extra.push("-metadata", tag);
+            }
+        }
         run([...inputs, ...extra, ...codecs.split(" "), `${FFMPEG_FIXTURES_DIR}/${file}`], encoder);
     }
     rmSync(cover);

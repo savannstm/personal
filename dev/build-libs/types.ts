@@ -16,29 +16,23 @@ export interface ToolchainProfile {
     asan: boolean;
     cxxStd?: string;
     rtti: boolean;
-    // Dependency library: its debug variant is built optimized, without debug info. On clang, the full build takes
-    // these from MSYS2's CLANG64 packages instead (see skipReason in runner.ts).
     debugOpt: boolean;
     march?: string;
     mtune?: string;
-    pgo?: boolean; // false: built plain during the library PGO passes (default true)
+    pgo?: boolean;
     linkLibsProfile?: boolean; // release links apply the library profile's context-sensitive part (consumer toolchain files)
-    fatLto?: boolean; // false: -flto=full objects without -ffat-lto-objects, for what is only ever linked into executables (default true)
-    lto?: boolean; // false: no LTO at all, for libraries whose LTO'd bitcode misbehaves when linked into a -flto=full program (default true)
+    fatLto?: boolean;
+    lto?: boolean;
     ownLibcxx?: boolean; // true: builds libc++ itself, so no libc++ include directory is added
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
     ownRuntimes?: boolean; // true: libc++, libc++abi, libunwind and libomp come from llvm-runtimes' install, once it exists
-    compilerRt?: boolean; // true: link with compiler-rt and libunwind, not libgcc (CLANG64 ships no libgcc)
 }
 
-/** What a library's hooks get: one variant (debug or release) of one checkout. */
 export interface Ctx {
     isDebug: boolean;
     msvc: boolean;
     path: string;
-    /** Install prefix of this variant. */
     root: string;
-    /** Runs a named sub-build once, recording it in the build state so a resumed run skips it. */
     step: (sub: string, build: () => Promise<void>) => Promise<void>;
 }
 
@@ -47,36 +41,20 @@ export type LibrarySource = { archive: string; subdir: string; version: string }
 export interface Library {
     name: string;
     source: LibrarySource;
-    // A function is a custom build; the default is CMake.
     build?: "cmake" | "meson" | "rust" | ((ctx: Ctx) => Promise<void>);
     sourceSubdir?: string;
-    // Only the release variant is built; the debug variant is skipped.
     releaseOnly?: boolean;
-    // Only built with these toolchains.
     toolchains?: Toolchain[];
-    // Merged over DEFAULT_PROFILE.
     profile?: Partial<ToolchainProfile>;
-    // CLANG64 package installed in place of this library on clang (with debugOpt, see skipReason in runner.ts).
     msys2?: string;
-    // Extra configure arguments for CMake, Meson or cargo.
     args?: (ctx: Ctx) => string;
-    // Extra environment for the CMake configure and build.
     env?: Record<string, string>;
-    // Once per checkout, after `git reset --hard` and before the variants (source patches, submodules).
     prepare?: (ctx: Omit<Ctx, "isDebug" | "root" | "step">) => Promise<void>;
-    // Per variant, right after it was installed and before the next variant's `git clean -fdx` (import lib renames, PDBs).
     finish?: (ctx: Ctx) => Promise<void>;
-    // What the build state records instead of the pin, when the output changes without the pin changing.
-    statePin?: (pin: string) => string;
-    // CMake: build this target instead of `cmake --build` + `cmake --install`.
     cmakeTarget?: string;
-    // CMake: put the MSVC 64-bit host tools (ml64, for MASM assembly) on PATH for the configure and build.
     msvcTools?: boolean;
-    // Meson: the command to run instead of `meson`.
     mesonCommand?: string[];
-    // Arch Linux package name to check upstream versions against (see check-updates.ts). Defaults to `name`.
     archPkg?: string;
-    // Override when the git tag isn't itself a clean version string (e.g. "pcre2-10.47").
     version?: string;
 }
 
@@ -140,6 +118,6 @@ export interface PlainArgs {
     includeDirs: string[];
     libName: string;
     sources: string[];
-    defFile?: string; // e.g. "libbz2.def" - consumed by the linker to control exports/import-lib
+    defFile?: string;
     exportAllSymbols?: boolean;
 }

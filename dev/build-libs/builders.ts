@@ -12,17 +12,15 @@ import {
     RELEASE_NATIVE,
     RELEASE_TOOLCHAIN,
     ROOT,
-    WIN,
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
-import { computeFlags, toolchainState } from "./toolchain.ts";
+import { computeFlags, rustPlatform, toolchainState } from "./toolchain.ts";
 import type { Ctx, Library, PlainArgs } from "./types.ts";
 
 export function cmakeVal(on: boolean): string {
     return on ? "ON" : "OFF";
 }
 
-/** Moves *.pdb from `from` to `to`; copy+delete because the build dir may sit on another device, where rename fails. */
 export async function movePdbs(from: string, to: string) {
     for (const file of (await readdir(from)).filter((f) => f.endsWith(".pdb"))) {
         await cp(`${from}/${file}`, `${to}/${file}`);
@@ -34,12 +32,10 @@ export async function copyLib(root: string, from: string, to: string): Promise<v
     await $`cp ${`${root}/lib/${from}`} ${`${root}/lib/${to}`}`;
 }
 
-/** Static (release) builds: the installed header must not declare the symbols dllimport. */
 export async function stripDllImport(file: string): Promise<void> {
     await $`sd -s -- "__declspec(dllimport)" "" ${file}`;
 }
 
-// A patch that no longer applies (the source moved on) warns and the build continues, instead of throwing.
 export async function applyPatch(path: string, patch: string): Promise<void> {
     try {
         await $`git apply ${`${ROOT}/patches/${patch}`}`.cwd(path);
@@ -52,7 +48,6 @@ export async function applyPatch(path: string, patch: string): Promise<void> {
     }
 }
 
-// CLANG64 ships no MASM, which openmp's Windows assembly needs: the newest MSVC 64-bit host tools (ml64) provide it.
 async function msvcHostBin(): Promise<string> {
     return `${await msvcToolsRoot()}/bin/Hostx64/x64`;
 }
@@ -67,7 +62,6 @@ export async function buildCMake(library: Library, ctx: Ctx) {
     if (msvcBin) {
         env.PATH = `${msvcBin};${process.env.PATH ?? ""}`;
     }
-    // CMake's ASM_MASM looks for a bare `ml`, which the 64-bit host dir doesn't provide; the x64 target's MASM file needs ml64.
     const masm = msvcBin ? ` -DCMAKE_ASM_MASM_COMPILER="${msvcBin}/ml64.exe"` : "";
     await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}${raw(masm)}`
         .cwd(cwd)
@@ -93,14 +87,12 @@ export async function buildMeson(library: Library, ctx: Ctx) {
 
 let cargoC: Promise<unknown> | undefined;
 
-// `cargo cinstall` comes from cargo-c, which a stock Rust install doesn't have.
-// --target: the global cargo config enables build-std, which needs an explicit target even for `cargo install`.
+function rustTarget(): string {
+    return toolchainState().toolchain === "msvc" ? "x86_64-pc-windows-msvc" : "x86_64-pc-windows-gnullvm";
+}
+
 function ensureCargoC() {
-    const target = WIN
-        ? toolchainState().toolchain === "msvc"
-            ? "x86_64-pc-windows-msvc"
-            : "x86_64-pc-windows-gnullvm"
-        : "x86_64-unknown-linux-gnu";
+    const target = rustTarget();
     cargoC ??= $`cargo cinstall --help`
         .quiet()
         .noThrow()
@@ -112,10 +104,8 @@ export async function buildRust(library: Library, ctx: Ctx) {
     await ensureCargoC();
     const { isDebug, path } = ctx,
         { toolchain } = toolchainState(),
-        profile = `${WIN ? (toolchain === "msvc" ? "win-msvc" : "win-clang") : "linux"}-${isDebug ? "debug" : "release"}`,
-        target = WIN
-            ? ` --target ${toolchain === "msvc" ? "x86_64-pc-windows-msvc" : "x86_64-pc-windows-gnullvm"}`
-            : "";
+        profile = `${rustPlatform(toolchain)}-${buildDir(isDebug)}`,
+        target = ` --target ${rustTarget()}`;
     await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(`--profile ${profile}${target}`)} --no-default-features ${raw(library.args?.(ctx) ?? "")} --prefix=${buildRoot(isDebug)}`.cwd(
         path,
     );
@@ -123,15 +113,10 @@ export async function buildRust(library: Library, ctx: Ctx) {
 
 interface AutoconfOptions {
     args?: string;
-    // The configure script to run, with its arguments (ICU uses runConfigureICU).
     configure?: string;
-    // Environment assignments for configure and make.
     env?: string;
-    // Patches the generated libtool (and, for MSVC, configure's libtool parts); off for projects that don't use libtool.
     libtool?: boolean;
-    // Passes the Windows system/runtime libraries as LIBS; off for projects that set their own.
     libs?: boolean;
-    // Environment assignments for make only.
     makeEnv?: string;
 }
 
@@ -151,20 +136,20 @@ export async function buildAutoconf(
     const msysPath = toMsysPath(path),
         { toolchain, tools } = toolchainState();
     const configurePath = `${path}/configure`;
-    let libs = "";
+    let libs = "-ladvapi32 -luser32";
 
-    if (WIN) {
-        libs = "-ladvapi32 -luser32";
-
-        if (toolchain !== "msvc") {
-            libs += ` -lclang_rt.builtins-x86_64 ${process.env.CFLAGS!.includes("-fsanitize=address") ? "-lclang_rt.asan_dynamic-x86_64 -lclang_rt.asan_dynamic_runtime_thunk-x86_64" : ""} -lole32 -lcfgmgr32`;
+    if (toolchain !== "msvc") {
+        libs += " -lclang_rt.builtins-x86_64";
+        if (process.env.CFLAGS!.includes("-fsanitize=address")) {
+            libs += " -lclang_rt.asan_dynamic-x86_64 -lclang_rt.asan_dynamic_runtime_thunk-x86_64";
         }
+        libs += " -lole32 -lcfgmgr32";
     }
 
-    const buildType = isDebug ? "--enable-shared --disable-static" : "--disable-shared --enable-static",
-        libtoolFlags = libtool
-            ? `--disable-dependency-tracking --with-gnu-ld ${WIN ? "--build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32" : ""} lt_cv_deplibs_check_method="pass_all" lt_cv_prog_gnu_ld=yes`
-            : "";
+    const buildType = isDebug ? "--enable-shared --disable-static" : "--disable-shared --enable-static";
+    const libtoolFlags = libtool
+        ? '--disable-dependency-tracking --with-gnu-ld --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 lt_cv_deplibs_check_method="pass_all" lt_cv_prog_gnu_ld=yes'
+        : "";
 
     if (libtool && toolchain === "msvc") {
         await $`sd -s -- ${"-Fe$tool_output_objdir$soname"} ${"-o $tool_output_objdir$soname"} ${configurePath}`;
@@ -174,8 +159,6 @@ export async function buildAutoconf(
 
     const libsArg = passLibs ? `LIBS="${libs}"` : "";
 
-    // Archive-sourced libraries (e.g. libraw) build in-tree and are never `git clean`ed between variants, so make
-    // would reuse the other variant's objects (debug's -DLIBRAW_BUILDLIB ones in a "static" release build).
     await bash`cd ${msysPath} && make distclean`.noThrow(); // fails harmlessly on a fresh tree
 
     await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}" CXX="sccache ${tools.cxx}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${toMsysPath(prefix)} ${libtoolFlags}`;
@@ -192,7 +175,6 @@ export async function buildAutoconf(
     await bash`cd ${msysPath} && ${env} ${makeEnv} make -j2 && make install`;
 }
 
-/** Compiles the sources directly: a static archive for release, a DLL (or .so) with its import lib for debug. */
 export async function buildPlain(
     path: string,
     isDebug: boolean,
@@ -215,61 +197,56 @@ export async function buildPlain(
     if (isDebug) {
         const baseName = libName.replace(/^lib/, "").replace(/\.a$/, "");
 
-        if (WIN) {
-            await $`mkdir -p ${`${prefix}/bin`}`;
+        await $`mkdir -p ${`${prefix}/bin`}`;
 
-            const dllName = `${baseName}.dll`,
-                importLibName = isMsvc ? `${baseName}.lib` : `${dllName}.a`,
-                implibFlag = isMsvc ? `-Wl,-IMPLIB:${importLibName}` : `-Wl,--out-implib,${importLibName}`,
-                pdbName = `${baseName}.pdb`,
-                exportAllFlag = !isMsvc && exportAllSymbols ? "-Wl,--export-all-symbols" : "";
+        const dllName = `${baseName}.dll`,
+            importLibName = isMsvc ? `${baseName}.lib` : `${dllName}.a`,
+            implibFlag = isMsvc ? `-Wl,-IMPLIB:${importLibName}` : `-Wl,--out-implib,${importLibName}`,
+            pdbName = `${baseName}.pdb`,
+            exportAllFlag = !isMsvc && exportAllSymbols ? "-Wl,--export-all-symbols" : "";
 
-            let resolvedDefFile = defFile;
-            if (isMsvc && exportAllSymbols && !defFile) {
-                const defName = `${baseName}.def`;
-                const stdout = await $`dumpbin /symbols *.o`.cwd(path).quiet().text();
+        let resolvedDefFile = defFile;
+        if (isMsvc && exportAllSymbols && !defFile) {
+            const defName = `${baseName}.def`;
+            const stdout = await $`dumpbin /symbols *.o`.cwd(path).quiet().text();
 
-                const symbols = new Set<string>();
-                for (const line of stdout.split("\n")) {
-                    if (!line.includes("External") || line.includes("UNDEF")) {
-                        continue;
-                    }
-
-                    if (!line.includes("notype ()")) {
-                        continue;
-                    }
-
-                    const name = line.split("|").pop()?.trim();
-                    if (!name || name.startsWith("__") || name.startsWith("??_")) {
-                        continue;
-                    }
-                    symbols.add(name);
+            const symbols = new Set<string>();
+            for (const line of stdout.split("\n")) {
+                if (!line.includes("External") || line.includes("UNDEF")) {
+                    continue;
                 }
 
-                const defContents = [
-                    `LIBRARY ${baseName}`,
-                    "EXPORTS",
-                    ...[...symbols].sort().map((s) => `    ${s}`),
-                ].join("\n");
-                await writeFile(`${path}/${defName}`, defContents, "utf-8");
-                resolvedDefFile = defName;
+                if (!line.includes("notype ()")) {
+                    continue;
+                }
+
+                const name = line.split("|").pop()?.trim();
+                if (!name || name.startsWith("__") || name.startsWith("??_")) {
+                    continue;
+                }
+                symbols.add(name);
             }
-            const defFlag = resolvedDefFile ? (isMsvc ? `-Wl,-DEF:${resolvedDefFile}` : resolvedDefFile) : "";
 
-            await bash`cd ${msysPath} && ${toolchainState().tools.cc} -shared -o ${dllName} *.o ${ldFlags} ${exportAllFlag} ${defFlag} ${implibFlag}`;
+            const defContents = [
+                `LIBRARY ${baseName}`,
+                "EXPORTS",
+                ...[...symbols].sort().map((s) => `    ${s}`),
+            ].join("\n");
+            await writeFile(`${path}/${defName}`, defContents, "utf-8");
+            resolvedDefFile = defName;
+        }
+        let defFlag = "";
+        if (resolvedDefFile) {
+            defFlag = isMsvc ? `-Wl,-DEF:${resolvedDefFile}` : resolvedDefFile;
+        }
 
-            await $`cp ${dllName} ${`${prefix}/bin/${dllName}`}`.cwd(path);
-            await $`cp ${importLibName} ${`${prefix}/lib/${importLibName}`}`.cwd(path);
+        await bash`cd ${msysPath} && ${toolchainState().tools.cc} -shared -o ${dllName} *.o ${ldFlags} ${exportAllFlag} ${defFlag} ${implibFlag}`;
 
-            if (isMsvc) {
-                await $`cp ${pdbName} ${`${prefix}/bin/${pdbName}`}`.cwd(path);
-            }
-        } else {
-            const soName = `lib${baseName}.so`;
+        await $`cp ${dllName} ${`${prefix}/bin/${dllName}`}`.cwd(path);
+        await $`cp ${importLibName} ${`${prefix}/lib/${importLibName}`}`.cwd(path);
 
-            await bash`cd ${msysPath} && ${toolchainState().tools.cc} -shared -o ${soName} *.o ${ldFlags}`;
-
-            await $`cp ${soName} ${`${prefix}/lib/${soName}`}`.cwd(path);
+        if (isMsvc) {
+            await $`cp ${pdbName} ${`${prefix}/bin/${pdbName}`}`.cwd(path);
         }
     } else {
         const outputLibName = isMsvc ? libName.replace(/^lib/, "").replace(/\.a$/, ".lib") : libName;

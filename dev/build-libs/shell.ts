@@ -1,6 +1,6 @@
 import { $ } from "dax";
 
-import { MSYS2_ROOT, WIN } from "./settings.ts";
+import { MSYS2_ROOT } from "./settings.ts";
 
 export const raw = (text: string) => $.rawArg(text);
 
@@ -9,19 +9,12 @@ function toMsysList(envVar: string): string {
 }
 
 export function toMsysPath(path: string) {
-    if (!WIN) {
-        return path;
-    }
     const p = path.replaceAll("\\", "/"),
         m = /^([A-Za-z]):(.*)$/.exec(p);
     return m ? `/${m[1]!.toLowerCase()}${m[2]}` : p;
 }
 
 export function bash(strings: TemplateStringsArray, ...values: any[]) {
-    if (!WIN) {
-        return $(strings, ...values);
-    }
-
     const innerCommand = strings.reduce((acc, s, i) => acc + s + (i < values.length ? String(values[i]) : ""), "");
 
     const includeLibExports = `export INCLUDE="${toMsysList("INCLUDE")}" && export LIB="${toMsysList("LIB")}"`;

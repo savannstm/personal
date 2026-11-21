@@ -1,9 +1,3 @@
-// Tag conventions vary wildly across upstreams (v1.2.3, VER-1-2-3, name-1.2.3, bare branch
-// names, ...), so tags alone can't be diffed for "is there a newer version". Arch Linux's
-// package database normalizes each package to a clean pkgver, so we cross-check against that
-// instead. The repository databases (core.db, extra.db) are downloaded once per run from the
-// freshest reachable public mirror: archlinux.org itself is never contacted.
-
 import consola from "consola";
 import pc from "picocolors";
 
@@ -31,10 +25,6 @@ const MIRRORS = [
     HEADERS = { "User-Agent": "build-libs-check-updates" },
     SYNC_BUCKET_SECONDS = 3600;
 
-/**
- * Reachable mirrors, best first. A fast mirror that lags upstream is useless for an update check, so
- * mirrors are bucketed by how far behind the newest `lastsync` they are, and only then ordered by latency.
- */
 async function rankMirrors(): Promise<string[]> {
     const probed = (
         await Promise.all(
@@ -62,7 +52,6 @@ async function rankMirrors(): Promise<string[]> {
     return probed.sort((a, b) => bucket(a.sync) - bucket(b.sync) || a.latency - b.latency).map((m) => m.mirror);
 }
 
-/** pkgname -> pkgver (epoch and pkgrel stripped, like the package search API reports it) from a repo .db. */
 async function loadRepoDb(mirror: string, repo: string): Promise<Map<string, string>> {
     const res = await fetch(`${mirror}/${repo}/os/x86_64/${repo}.db`, {
         headers: HEADERS,
@@ -72,7 +61,6 @@ async function loadRepoDb(mirror: string, repo: string): Promise<Map<string, str
         throw new Error(`${mirror}: ${repo}.db: ${res.status} ${res.statusText}`);
     }
 
-    // The .db is a gzipped tar of `<name>-<ver>-<rel>/desc` entries; only those are read.
     const tar = new Uint8Array(await new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()),
         text = new TextDecoder(),
         versions = new Map<string, string>();
@@ -107,7 +95,6 @@ async function loadMirrorVersions(): Promise<Map<string, string>> {
         throw new Error("no Arch mirror is reachable");
     }
 
-    // A mirror can answer `lastsync` and still fail the (much larger) .db download, so fall through the ranking.
     for (const mirror of ranked) {
         try {
             const dbs = await Promise.all(MIRROR_REPOS.map((repo) => loadRepoDb(mirror, repo)));
@@ -122,8 +109,6 @@ async function loadMirrorVersions(): Promise<Map<string, string>> {
     throw new Error("could not read the package databases from any Arch mirror");
 }
 
-// Best-effort: strip a leading name prefix and turn separator dashes into dots.
-// Wrong on names that end in a digit baked into the tag (handled via manual `version` overrides).
 function normalizeVersion(raw: string): string {
     return raw.replace(/^\D+/, "").replaceAll("-", ".");
 }

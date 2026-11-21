@@ -16,7 +16,6 @@ import {
     SEP,
     settings,
     TOOLCHAINS_DIR,
-    WIN,
 } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { BuildConfig, CliOptions, Conf, Library, Shared, Toolchain, ToolchainProfile, Tools } from "./types.ts";
@@ -26,34 +25,11 @@ const C_STD = "17",
     CXX_STD = "23",
     MSVC_TARGET = "x86_64-pc-windows-msvc";
 
-const TOOL_VARS: [string, keyof Tools][] = [
-    ["CMAKE_C_COMPILER", "cc"],
-    ["CMAKE_CXX_COMPILER", "cxx"],
-    ["CMAKE_ASM_COMPILER", "asm"],
-    ["CMAKE_AR", "ar"],
-    ["CMAKE_C_COMPILER_AR", "ar"],
-    ["CMAKE_CXX_COMPILER_AR", "ar"],
-    ["CMAKE_RANLIB", "ranlib"],
-    ["CMAKE_C_COMPILER_RANLIB", "ranlib"],
-    ["CMAKE_CXX_COMPILER_RANLIB", "ranlib"],
-    ["CMAKE_STRIP", "strip"],
-    ["CMAKE_OBJCOPY", "objcopy"],
-    ["CMAKE_OBJDUMP", "objdump"],
-    ["CMAKE_ADDR2LINE", "addr2line"],
-];
-
-const INI_BINARIES: [string, keyof Tools][] = [
-    ["c", "cc"],
-    ["cpp", "cxx"],
-    ["ar", "ar"],
-    ["ranlib", "ranlib"],
-    ["strip", "strip"],
-    ["objcopy", "objcopy"],
-];
-
 export const TOOLCHAINS: readonly Toolchain[] = ["clang", "msvc"];
 
-export const WINDOWS_ONLY_TOOLCHAINS: ReadonlySet<Toolchain> = new Set(["msvc"]);
+export function rustPlatform(toolchain: Toolchain): string {
+    return toolchain === "msvc" ? "win-msvc" : "win-clang";
+}
 
 export function isToolchain(value: string): value is Toolchain {
     return (TOOLCHAINS as readonly string[]).includes(value);
@@ -63,7 +39,6 @@ let current: Conf | null = null;
 
 export const DEFAULT_PROFILE: ToolchainProfile = { asan: false, debugOpt: true, rtti: false };
 
-// The toolchain files left in ./toolchains after a run, for the projects that consume the libraries.
 export const CONSUMER_PROFILE: ToolchainProfile = { asan: false, debugOpt: false, linkLibsProfile: true, rtti: true };
 
 export function profileOf(library: Library): ToolchainProfile {
@@ -91,19 +66,17 @@ export async function computeFlags(isDebug: boolean) {
         opt = isDebug ? flags.debug : flags.release,
         root = buildRoot(isDebug);
 
-    // Only this prefix's .pc files: the inherited PKG_CONFIG_PATH would resolve libraries we don't build to MSYS2's copies, with CLANG64 include dirs.
-    // Native Windows pkgconf splits on ';'; with ':' the "D:/..." paths are cut apart and it falls back to MSYS2's .pc files.
     const pkgconfPaths = `${root}/lib/pkgconfig${SEP}${root}/share/pkgconfig`;
 
-    // ownLibcxx: libc++ is being built, and a second copy of its headers would make the wrappers (string.h) include_next into an empty one.
-    // Pkg-config's include dirs are -isystem and would otherwise land ahead of the libc++ headers, so the libc++ dir goes first.
-    // Own libc++ headers: -nostdinc++ drops CLANG64's default libc++ dir, which would otherwise come after ours, so libc++'s string.h include_next lands on it and never reaches the C string.h.
-    const ownHeaders = flags.ownClang || flags.ownRuntimes,
+    let libcxx = "";
+    if (flags.toolchain !== "msvc" && !flags.ownLibcxx) {
         libcxx =
-            flags.toolchain === "msvc" || flags.ownLibcxx
-                ? ""
-                : `${ownHeaders ? "-nostdinc++ " : ""}-isystem ${ownHeaders ? buildRoot(false) : CLANG64}/include/c++/v1`,
-        cFlags = `-std=gnu17 ${opt}`,
+            flags.ownClang || flags.ownRuntimes
+                ? `-nostdinc++ -isystem ${buildRoot(false)}/include/c++/v1`
+                : `-isystem ${CLANG64}/include/c++/v1`;
+    }
+
+    const cFlags = `-std=gnu17 ${opt}`,
         cxxFlags = `-std=gnu++${flags.cxxStd} ${libcxx} ${opt}`,
         includeFlags = (
             await bash`shopt -s nullglob; PKG_CONFIG_PATH="${pkgconfPaths}" pkg-config --cflags $(basename -s .pc ${`${root}/lib/pkgconfig/*.pc`}) 2>/dev/null | sd -s -- "-I" "-isystem "`
@@ -136,7 +109,6 @@ function replaceEntry(existing: string | undefined, active: string, inactive: st
     return [...rest, active].join(SEP);
 }
 
-/** Drops entries under the other build's prefix, which earlier updateEnv calls left in the inherited env. */
 function dropInactiveRoot(existing: string | undefined, inactiveRoot: string): string {
     return (existing ?? "")
         .split(SEP)
@@ -164,7 +136,6 @@ export async function updateEnv(isDebug: boolean) {
         process.env.LIB = replaceEntry(process.env.LIB, lib.active, lib.inactive);
     }
 
-    // Libraries compile with our clang once it's installed; placed first so it wins over MSYS2's.
     const ownBin = toolchainState().ownClang ? `${buildRoot(false)}/bin${SEP}` : "";
     process.env.PATH = ownBin + replaceEntry(process.env.PATH, path.active, path.inactive);
 
@@ -218,29 +189,30 @@ endif()`,
 
 async function genToolchains(options: CliOptions, profile: ToolchainProfile): Promise<Conf> {
     const ownClang = profile.ownClang !== false && existsSync(`${buildRoot(false)}/bin/clang.exe`),
-        // Absent until llvm-runtimes is installed (the llvm job downloads it), so the PGO job and local runs keep CLANG64's.
         ownRuntimes = profile.ownRuntimes === true && existsSync(`${buildRoot(false)}/lib/libc++.a`),
         shared = buildShared(options.toolchain, profile, ownClang, ownRuntimes),
         debug = buildDebug(options, shared, profile),
         release = buildRelease(options, shared, profile),
         tools = getTools(options.toolchain),
-        // The files left for the user's projects name the user's LLVM; the builds' own files use the clang on PATH.
-        fileTools = profile === CONSUMER_PROFILE && WIN ? getTools(options.toolchain, LLVM_ROOT) : tools;
+        fileTools = profile === CONSUMER_PROFILE ? getTools(options.toolchain, LLVM_ROOT) : tools;
 
     await mkdir(TOOLCHAINS_DIR, { recursive: true });
 
-    await (options.toolchain === "msvc"
-        ? createTargets("bz2.lib", "lzma.lib", "deflatestatic.lib", "zstd_static.lib")
-        : createTargets("libbz2.a", "liblzma.a", "libdeflate.a", "libzstd.a"));
+    if (options.toolchain === "msvc") {
+        await createTargets("bz2.lib", "lzma.lib", "deflatestatic.lib", "zstd_static.lib");
+    } else {
+        await createTargets("libbz2.a", "liblzma.a", "libdeflate.a", "libzstd.a");
+    }
 
     await Promise.all([
         writeFile(DEBUG_NATIVE, toIni(debug, fileTools)),
         writeFile(RELEASE_NATIVE, toIni(release, fileTools)),
         writeFile(DEBUG_TOOLCHAIN, toCmakeToolchain(debug, fileTools)),
         writeFile(RELEASE_TOOLCHAIN, toCmakeToolchain(release, fileTools)),
-        ...(WIN
-            ? [writeFile(DEBUG_FFMPEG_ROOT, toFfmpegRoot(debug)), writeFile(RELEASE_FFMPEG_ROOT, toFfmpegRoot(release))]
-            : []),
+    ]);
+    await Promise.all([
+        writeFile(DEBUG_FFMPEG_ROOT, toFfmpegRoot(debug)),
+        writeFile(RELEASE_FFMPEG_ROOT, toFfmpegRoot(release)),
     ]);
 
     return {
@@ -257,7 +229,6 @@ async function genToolchains(options: CliOptions, profile: ToolchainProfile): Pr
     };
 }
 
-// Release flags without LTO, shared by release and debugOpt builds. Visibility flags stay release-only.
 const RELEASE_NON_LTO_CFLAGS = [
     "-O3",
     "-fmerge-all-constants",
@@ -288,8 +259,6 @@ export const RELEASE_NON_LTO_LINKER_FLAGS = [
     "-Wl,--icf=all",
     "-Wl,--no-insert-timestamp",
 ];
-// What buildDebug passes a clang (MinGW) -O0 build of a sanitized library: the llvm-project training compiles with them, so
-// the clang it trains is profiled on the code generation, DWARF and ASAN instrumentation the debug builds use.
 export const DEBUG_TRAIN_CFLAGS = [
     "-O0",
     "-g2",
@@ -306,23 +275,26 @@ export const DEBUG_TRAIN_CFLAGS = [
     "-fsanitize-address-use-after-return=runtime",
     "-fsanitize-annotate-debug-info=address",
 ];
-const RELEASE_ELF_LINKER_FLAGS = ["-Wl,-z,now", "-Wl,-z,norelro", "-Wl,-z,nosectionheader"];
 
 function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
-    const cflags = [...shared.cflags, ...(profile.debugOpt ? RELEASE_NON_LTO_CFLAGS : ["-O0"])],
+    const cflags = [...shared.cflags],
         ldflags = [...shared.ldflags];
 
-    // Debug info and debug-only hardening are meaningless with -O3 and bloat/slow the library build; only -O0 builds keep them.
-    if (!profile.debugOpt) {
-        cflags.push("-g2", "-gdwarf-5", "-glldb", "-gcolumn-info", "-fstandalone-debug");
-        cflags.push(options.toolchain === "msvc" ? "-gcodeview" : "-gz=zstd");
-        cflags.push("-fstack-protector-strong", "-ftrivial-auto-var-init=pattern");
-    }
-
     if (profile.debugOpt) {
-        ldflags.push(
-            ...(options.toolchain === "msvc" ? RELEASE_NON_LTO_MSVC_LINKER_FLAGS : RELEASE_NON_LTO_LINKER_FLAGS),
-        );
+        cflags.push(...RELEASE_NON_LTO_CFLAGS);
+        if (options.toolchain === "msvc") {
+            ldflags.push(...RELEASE_NON_LTO_MSVC_LINKER_FLAGS);
+        } else {
+            ldflags.push(...RELEASE_NON_LTO_LINKER_FLAGS);
+        }
+    } else {
+        cflags.push("-O0", "-g2", "-gdwarf-5", "-glldb", "-gcolumn-info", "-fstandalone-debug");
+        if (options.toolchain === "msvc") {
+            cflags.push("-gcodeview");
+        } else {
+            cflags.push("-gz=zstd");
+        }
+        cflags.push("-fstack-protector-strong", "-ftrivial-auto-var-init=pattern");
     }
 
     if (options.toolchain === "msvc") {
@@ -362,16 +334,6 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
         ldflags.push("-fsanitize=address,undefined");
     }
 
-    if (!WIN) {
-        cflags.push("-D_FORTIFY_SOURCE=2");
-        if (profile.debugOpt) {
-            cflags.push("-fno-unwind-tables", "-fno-semantic-interposition", "-fno-plt");
-            ldflags.push(...RELEASE_ELF_LINKER_FLAGS);
-        } else {
-            cflags.push("-fstack-clash-protection", "-fdebug-types-section");
-        }
-    }
-
     return {
         buildType: "debug",
         cflags: cflags.join(" "),
@@ -384,66 +346,64 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
     };
 }
 
-function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
-    // Profiling builds skip LTO, so the training runs measure what they were instrumented for.
-    const lto = !settings.pgoTraining && profile.lto !== false;
-    const commonOptFlags = [
-        ...RELEASE_NON_LTO_CFLAGS,
-        ...(lto ? ["-flto=full", ...(profile.fatLto === false ? [] : ["-ffat-lto-objects"])] : []),
-        "-fvisibility=hidden",
-        "-fvisibility-inlines-hidden",
-        "-DNDEBUG",
-    ];
+export function marchFlags(profile: ToolchainProfile): string[] {
+    return [`-march=${profile.march ?? "x86-64-v3"}`, `-mtune=${profile.mtune ?? "generic"}`];
+}
 
-    const libsPgo = profile.pgo === false ? null : settings.libsPgo,
-        // -w silences every warning, the profile mismatch ones too (and no flag after it turns one back on): while the library
-        // profile is applied, the warnings are off by group instead, with only -Wprofile-instr-out-of-date on.
-        cflags = [
-            ...(libsPgo === "use"
-                ? shared.cflags.map((flag) => (flag === "-w" ? "-Wno-everything" : flag))
-                : shared.cflags),
-            ...commonOptFlags,
-            ...(libsPgo === "use" ? ["-Wprofile-instr-out-of-date"] : []),
-        ],
-        linkerFlags =
-            options.toolchain === "msvc"
-                ? [
-                      ...RELEASE_NON_LTO_MSVC_LINKER_FLAGS,
-                      // The MSVC driver doesn't forward -ffat-lto-objects to lld-link (the MinGW/ELF ones pass --fat-lto-objects),
-                      // and without it lld-link links the objects' machine code instead of LTOing their bitcode.
-                      ...(lto
-                          ? [
-                                "-Wl,-LTCG",
-                                "-Wl,-OPT:LLDLTO=3",
-                                ...(profile.fatLto === false ? [] : ["-Wl,-fat-lto-objects"]),
-                            ]
-                          : []),
-                  ]
-                : [...RELEASE_NON_LTO_LINKER_FLAGS, ...(lto ? ["-Wl,--lto-O3"] : [])];
+export function releaseOptFlags(lto: boolean, fatLto: boolean): string[] {
+    const flags = [...RELEASE_NON_LTO_CFLAGS];
+    if (lto) {
+        flags.push("-flto=full");
+        if (fatLto) {
+            flags.push("-ffat-lto-objects");
+        }
+    }
+    flags.push("-fvisibility=hidden", "-fvisibility-inlines-hidden", "-DNDEBUG");
+    return flags;
+}
+
+function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
+    const lto = !settings.pgoTraining && profile.lto !== false,
+        fatLto = profile.fatLto !== false,
+        libsPgo = profile.pgo === false ? null : settings.libsPgo;
+
+    const commonOptFlags = releaseOptFlags(lto, fatLto);
+
+    const cflags = shared.cflags.map((flag) => (libsPgo === "use" && flag === "-w" ? "-Wno-everything" : flag));
+    cflags.push(...commonOptFlags);
+    if (libsPgo === "use") {
+        cflags.push("-Wprofile-instr-out-of-date");
+    }
+
+    const linkerFlags: string[] = [];
+    if (options.toolchain === "msvc") {
+        linkerFlags.push(...RELEASE_NON_LTO_MSVC_LINKER_FLAGS);
+        if (lto) {
+            linkerFlags.push("-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3");
+            if (fatLto) {
+                linkerFlags.push("-Wl,-fat-lto-objects");
+            }
+        }
+    } else {
+        linkerFlags.push(...RELEASE_NON_LTO_LINKER_FLAGS);
+        if (lto) {
+            linkerFlags.push("-Wl,--lto-O3");
+        }
+    }
 
     if (!profile.rtti) {
         cflags.push("-fno-rtti");
     }
 
-    if (!WIN) {
-        cflags.push("-fno-unwind-tables", "-fno-semantic-interposition", "-fno-plt");
-        linkerFlags.push(...RELEASE_ELF_LINKER_FLAGS);
-    }
-
     const ldflags = [...shared.ldflags, ...commonOptFlags, ...linkerFlags];
 
     if (libsPgo === "gen") {
-        // Atomic counter updates: ImageMagick (OpenMP) and libjxl run the instrumented code from several threads.
-        // The link flag pulls in the profile runtime, which configure-time link checks also need.
         cflags.push("-fprofile-generate", "-fprofile-update=atomic");
         ldflags.push("-fprofile-generate");
     } else if (libsPgo === "use") {
         cflags.push(`-fprofile-use=${settings.libsProfdata}`);
     }
 
-    // The context-sensitive part of the library profile is applied in the LTO link, which for the static libraries
-    // happens in the consumer. Functions without profile records (everything outside the trained libraries) are left alone.
-    // The MSVC driver doesn't pass the profile on to lld-link.
     if (
         profile.linkLibsProfile &&
         options.toolchain !== "msvc" &&
@@ -453,14 +413,12 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         ldflags.push(`-fprofile-use=${settings.libsProfdata}`);
     }
 
-    if (WIN) {
-        if (options.toolchain === "msvc") {
-            cflags.push("-fms-runtime-lib=static");
-            ldflags.push("-fms-runtime-lib=static");
-        } else {
-            cflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
-            ldflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
-        }
+    if (options.toolchain === "msvc") {
+        cflags.push("-fms-runtime-lib=static");
+        ldflags.push("-fms-runtime-lib=static");
+    } else {
+        cflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
+        ldflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
     }
 
     return {
@@ -476,47 +434,43 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
 }
 
 function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: boolean, ownRuntimes: boolean): Shared {
-    const march = profile.march ?? "x86-64-v3",
-        mtune = profile.mtune ?? "generic",
-        cflags = ["-pipe", `-march=${march}`, `-mtune=${mtune}`, "-w", "-fopenmp", "-lclang_rt.builtins-x86_64"],
-        ldflags = [`-march=${march}`, `-mtune=${mtune}`, "-fopenmp", "-lclang_rt.builtins-x86_64"];
+    const march = marchFlags(profile),
+        userClang = profile === CONSUMER_PROFILE && toolchain === "clang",
+        builtins = ownClang || userClang ? [] : ["-lclang_rt.builtins-x86_64"],
+        cflags = ["-pipe", ...march, "-w", "-fopenmp", ...builtins],
+        ldflags = [...march, "-fopenmp", ...builtins];
 
     cflags.push("-fuse-ld=lld");
     ldflags.push("-fuse-ld=lld");
 
     if (ownClang) {
-        // Our clang ships its own libc++ and libunwind, but not the MinGW sysroot, which comes from CLANG64 (as in the training build).
         cflags.push(`--sysroot=${CLANG64}`, `-isystem ${CLANG64}/include`);
         ldflags.push(`--sysroot=${CLANG64}`, `-L${buildRoot(false)}/lib`);
     }
 
+    if (userClang) {
+        cflags.push(`--sysroot=${CLANG64}`);
+        ldflags.push(`--sysroot=${CLANG64}`);
+    }
+
     if (ownRuntimes) {
-        // Ahead of CLANG64's lib directories in the link search path, so -lc++, -lunwind and -lomp resolve here.
         ldflags.push(`-L${buildRoot(false)}/lib`);
-        // The static libc++.a doesn't contain libc++abi, and clang's -stdlib=libc++ only adds -lc++ (lld resolves archives order-independently).
         ldflags.push("-lc++abi", "-lunwind");
     }
 
-    if (profile.compilerRt) {
-        cflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
-        ldflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
+    cflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
+    ldflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
+
+    const target = resolveWinTarget(toolchain);
+    cflags.push(`--target=${target}`);
+    ldflags.push(`--target=${target}`);
+
+    if (toolchain === "msvc") {
+        cflags.push("-DWIN32", "-D_MT", "-DNOMINMAX");
+        ldflags.push("-Wl,-IGNORE:LONGSECTIONS");
     }
 
-    if (WIN) {
-        const target = resolveWinTarget(toolchain);
-        cflags.push(`--target=${target}`);
-        ldflags.push(`--target=${target}`);
-
-        if (toolchain === "msvc") {
-            cflags.push("-DWIN32", "-D_MT", "-DNOMINMAX");
-            ldflags.push("-Wl,-IGNORE:LONGSECTIONS");
-        }
-
-        cflags.push("-D_WIN32_WINNT=0x0A00", "-DWINVER=0x0A00");
-    } else {
-        cflags.push("-fPIC");
-        ldflags.push("-fPIC", "-Wl,--pie");
-    }
+    cflags.push("-D_WIN32_WINNT=0x0A00", "-DWINVER=0x0A00");
 
     return { cflags, ldflags };
 }
@@ -525,20 +479,20 @@ function cq(s: string): string {
     return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-/** The LLVM tools by name, found on PATH; with `root` (Windows), by their path under it. */
 function getTools(toolchain: Toolchain, root?: string): Tools {
     const bin = (tool: string) => (root ? `${root}/bin/${tool}.exe` : tool);
+    const rcTool = toolchain === "msvc" ? "llvm-rc" : "llvm-windres";
     return {
         addr2line: bin("llvm-addr2line"),
         ar: bin("llvm-ar"),
         asm: bin("clang"),
         cc: bin("clang"),
         cxx: bin("clang++"),
-        dlltool: WIN ? bin("llvm-dlltool") : null,
+        dlltool: bin("llvm-dlltool"),
         objcopy: bin("llvm-objcopy"),
         objdump: bin("llvm-objdump"),
         ranlib: bin("llvm-ranlib"),
-        rc: WIN ? bin(toolchain === "msvc" ? "llvm-rc" : "llvm-windres") : null,
+        rc: bin(rcTool),
         strip: bin("llvm-strip"),
     };
 }
@@ -553,12 +507,23 @@ function resolveWinTarget(toolchain: Toolchain): string {
 }
 
 function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
-    // CLANG64's package configs (e.g. SPNGConfig.cmake, found through PATH's prefix) call find_dependency without including its macro.
     const lines: string[] = ["include(CMakeFindDependencyMacro)"];
 
-    for (const [varName, prop] of TOOL_VARS) {
-        lines.push(`set(${varName} ${tools[prop]})`);
-    }
+    lines.push(
+        `set(CMAKE_C_COMPILER ${tools.cc})`,
+        `set(CMAKE_CXX_COMPILER ${tools.cxx})`,
+        `set(CMAKE_ASM_COMPILER ${tools.asm})`,
+        `set(CMAKE_AR ${tools.ar})`,
+        `set(CMAKE_C_COMPILER_AR ${tools.ar})`,
+        `set(CMAKE_CXX_COMPILER_AR ${tools.ar})`,
+        `set(CMAKE_RANLIB ${tools.ranlib})`,
+        `set(CMAKE_C_COMPILER_RANLIB ${tools.ranlib})`,
+        `set(CMAKE_CXX_COMPILER_RANLIB ${tools.ranlib})`,
+        `set(CMAKE_STRIP ${tools.strip})`,
+        `set(CMAKE_OBJCOPY ${tools.objcopy})`,
+        `set(CMAKE_OBJDUMP ${tools.objdump})`,
+        `set(CMAKE_ADDR2LINE ${tools.addr2line})`,
+    );
     if (tools.dlltool) {
         lines.push(`set(CMAKE_DLLTOOL ${tools.dlltool})`);
     }
@@ -592,18 +557,15 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     lines.push(`set(CMAKE_SHARED_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_MODULE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_PREFIX_PATH ${cq(b.prefix)} CACHE STRING "" FORCE)`);
-    // pkg-config must only see this prefix's .pc files, else it resolves libs from another build type
     const prefix = cq(b.prefix).slice(1, -1),
         pcDirs = [`${prefix}/lib/pkgconfig`, `${prefix}/share/pkgconfig`];
-    // llvm-project sets the LLVM_DEPS_PREFIX env var (Library.env) to resolve its libxml2 deps from CLANG64. An env var, not a -D cache
-    // entry: LLVM's try_compile checks run this file without the -D entries, and would otherwise reset PKG_CONFIG_PATH here.
     lines.push("if (DEFINED ENV{LLVM_DEPS_PREFIX})");
     lines.push('    set(CMAKE_PREFIX_PATH "$ENV{LLVM_DEPS_PREFIX}" CACHE STRING "" FORCE)');
     lines.push(
         '    set(ENV{PKG_CONFIG_PATH} "$ENV{LLVM_DEPS_PREFIX}/lib/pkgconfig;$ENV{LLVM_DEPS_PREFIX}/share/pkgconfig")',
     );
     lines.push("else()");
-    lines.push(`    set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(WIN ? ";" : ":")}")`);
+    lines.push(`    set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(";")}")`);
     lines.push("endif()");
 
     if (b.toolchain === "msvc") {
@@ -614,11 +576,7 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
 
     lines.push(`set(CMAKE_INSTALL_PREFIX ${cq(b.prefix)} CACHE PATH "" FORCE)`);
     lines.push(`set(ICU_ROOT ${cq(b.prefix)} CACHE STRING "" FORCE)`);
-    lines.push(
-        `set(RUST_PROFILE "${WIN ? (b.toolchain === "msvc" ? "win-msvc" : "win-clang") : "linux"}-${b.buildType}" CACHE STRING "")`,
-    );
-    // Only MSVC needs explicit ICU libs (its renamed c*.lib names are not found by FindICU). Clang finds ICU via ICU_ROOT;
-    // pinning it to this prefix broke CI, where ICU is a CLANG64 package and the prefix has no ICU libs.
+    lines.push(`set(RUST_PROFILE "${rustPlatform(b.toolchain)}-${b.buildType}" CACHE STRING "")`);
     if (b.toolchain === "msvc") {
         const icuLibDir = `${prefix}/lib`;
         lines.push(`set(ICU_UC_LIBRARY "${icuLibDir}/cicuuc.lib" CACHE STRING "" FORCE)`);
@@ -629,20 +587,15 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
         lines.push(`set(ICU_DATA_LIBRARY_RELEASE "${icuLibDir}/cicudt.lib" CACHE STRING "" FORCE)`);
     }
 
-    // Runs after project() in each top-level project, so it can see PROJECT_NAME (the toolchain file cannot).
-    if (WIN) {
-        const topLevelIncludes = [`\${CMAKE_CURRENT_LIST_DIR}/ffmpeg-root-${b.buildType}.cmake`];
-        if (b.buildType === "release") {
-            topLevelIncludes.unshift("${CMAKE_CURRENT_LIST_DIR}/inject-targets.cmake");
-        }
-        lines.push(`set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${topLevelIncludes.join(";")}" CACHE FILEPATH "" FORCE)`);
+    const topLevelIncludes = [`\${CMAKE_CURRENT_LIST_DIR}/ffmpeg-root-${b.buildType}.cmake`];
+    if (b.buildType === "release") {
+        topLevelIncludes.unshift("${CMAKE_CURRENT_LIST_DIR}/inject-targets.cmake");
     }
+    lines.push(`set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${topLevelIncludes.join(";")}" CACHE FILEPATH "" FORCE)`);
 
     return `${lines.join("\n")}\n`;
 }
 
-// Points each consumer project's cache variables at the FFmpeg variants built for it (only the selected variants).
-// Not FORCE: a -D<var>=... given on the command line (already cached) wins.
 function toFfmpegRoot(b: BuildConfig): string {
     const projects = new Map<string, string[]>();
     for (const [variant, { consumers }] of Object.entries(FFMPEG_VARIANTS)) {
@@ -668,18 +621,21 @@ function toIni(b: BuildConfig, tools: Tools): string {
     const lines: string[] = [];
 
     lines.push("[binaries]");
-    const needCompilerArgs = WIN && b.toolchain !== "msvc";
-    for (const [key, prop] of INI_BINARIES) {
-        if (needCompilerArgs && (key === "c" || key === "cpp")) {
-            lines.push(
-                `${key} = ${quoteArr(`sccache ${tools[prop]} -fuse-ld=lld --target=${resolveWinTarget(b.toolchain)}`)}`,
-            );
-        } else if (key === "c" || key === "cpp") {
-            lines.push(`${key} = ['sccache', '${tools[prop]}']`);
-        } else {
-            lines.push(`${key} = '${tools[prop]}'`);
-        }
+    if (b.toolchain !== "msvc") {
+        const winArgs = `-fuse-ld=lld --target=${resolveWinTarget(b.toolchain)}`;
+        lines.push(
+            `c = ${quoteArr(`sccache ${tools.cc} ${winArgs}`)}`,
+            `cpp = ${quoteArr(`sccache ${tools.cxx} ${winArgs}`)}`,
+        );
+    } else {
+        lines.push(`c = ['sccache', '${tools.cc}']`, `cpp = ['sccache', '${tools.cxx}']`);
     }
+    lines.push(
+        `ar = '${tools.ar}'`,
+        `ranlib = '${tools.ranlib}'`,
+        `strip = '${tools.strip}'`,
+        `objcopy = '${tools.objcopy}'`,
+    );
     if (tools.rc) {
         lines.push(`windres = '${tools.rc}'`);
     }

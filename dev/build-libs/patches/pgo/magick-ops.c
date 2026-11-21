@@ -30,8 +30,8 @@ static KernelInfo *DIAMOND, *SEPIA_MATRIX, *GAUSSIAN;
     X(kuwahara, return MagickKuwaharaImage(w, 0, 2);)                                                                  \
     X(medianFilter, return MagickStatisticImage(w, MedianStatistic, 3, 3);)                                            \
     X(reduceNoise, return MagickStatisticImage(w, NonpeakStatistic, 2, 2);)                                            \
-    X(mode, return MagickModeImage(w, 2);)                                                                             \
-    X(meanShift, return MagickMeanShiftImage(w, 5, 5, 0.1 * QuantumRange);)                                            \
+    X(mode, return MagickStatisticImage(w, ModeStatistic, 2, 2);)                                                      \
+    X(meanShift,return MagickMeanShiftImage(w, 5, 5, 0.1 * QuantumRange);)                                            \
     X(despeckle, return MagickDespeckleImage(w);)                                                                      \
     X(waveletDenoise, return MagickWaveletDenoiseImage(w, 0.05 * QuantumRange, 0);)                                    \
     X(enhance, return MagickEnhanceImage(w);)                                                                          \

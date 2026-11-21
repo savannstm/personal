@@ -7,7 +7,7 @@ on:
                 description: "Only build these libraries (comma-separated, empty = all)"
                 default: ""
             retrain:
-                description: "Retrain the PGO profiles even if profiles for this build's sources and compiler are cached"
+                description: "Retrain the PGO profiles even if profiles for this build's library versions and compiler are cached"
                 type: boolean
                 default: false
             skip_pgo:
@@ -21,9 +21,9 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
-    # The PGO profiles are named after a key of everything they're trained from (library versions, patches, trainers,
-    # compiler; see resolvePgoProfiles in pgo.ts) and cached under that name. Only a profile that isn't cached for the
-    # current key is trained, so a library or compiler update retrains exactly what it affects. LLVM's profile trains in
+    # The PGO profiles are named after a key of the versions they're trained from (library pins and the compiler's version;
+    # see resolvePgoProfiles in pgo.ts) and cached under that name. Only a profile that isn't cached for the current key is
+    # trained, so a library or compiler update retrains exactly what it affects; anything else needs `retrain`. LLVM's profile trains in
     # stages, each its own job: the IR profiles of clang (needs no libraries) and of lld (links the PGO libraries) in
     # parallel, then the final profile's context-sensitive stage, which builds clang and lld together from both.
     pgo-keys:
@@ -385,8 +385,7 @@ jobs:
                   key: libs-split-${{ github.run_id }}
                   restore-keys: libs-split-
 
-            # Exactly the library profile for this build's key. Libraries built with a profile record its content in the build
-            # state, so a new profile rebuilds them and an unchanged one doesn't.
+            # Exactly the library profile for this build's key.
             - uses: actions/cache/restore@v6
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}

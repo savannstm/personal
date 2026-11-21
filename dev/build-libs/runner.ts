@@ -6,20 +6,16 @@ import pc from "picocolors";
 
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
 import { getPin, LIBRARIES, shouldBuildLibrary } from "./libraries.ts";
-import { libsProfileTag } from "./pgo.ts";
-import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN, WIN_TAR } from "./settings.ts";
+import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN_TAR } from "./settings.ts";
 import { configureToolchain, CONSUMER_PROFILE, profileOf, updateEnv } from "./toolchain.ts";
 import type { BuildState, CliOptions, Ctx, Library, Toolchain } from "./types.ts";
 
 const BUILDERS = { cmake: buildCMake, meson: buildMeson, rust: buildRust };
 
-/** Why a library selected by --only/--exclude is still not built, or null when it is. */
 export function skipReason(library: Library, options: CliOptions): null | string {
     if (library.toolchains && !library.toolchains.includes(options.toolchain)) {
         return `${library.toolchains.join("/")} only`;
     }
-    // Dependency libraries come from MSYS2's CLANG64 packages on clang (installed by host.ts); only a release-only run
-    // (as the library PGO pipeline does) builds them.
     if (options.toolchain === "clang" && !options.onlyRelease && profileOf(library).debugOpt) {
         return "debug-optimized dependency, clang uses its CLANG64 package (--only-release builds it)";
     }
@@ -35,7 +31,9 @@ export async function buildRepos(options: CliOptions) {
         }
         const reason = skipReason(library, options);
         if (reason) {
-            skipped.set(reason, [...(skipped.get(reason) ?? []), library.name]);
+            const names = skipped.get(reason) ?? [];
+            names.push(library.name);
+            skipped.set(reason, names);
         } else {
             selected.push(library);
         }
@@ -63,16 +61,12 @@ export async function buildRepos(options: CliOptions) {
     await configureToolchain(options, CONSUMER_PROFILE);
 }
 
-// MSYS2's coreutils `link.exe` would shadow the MSVC-style linker of the same name on PATH.
 async function hideMsysLinkExe() {
-    if (WIN) {
-        await $`mv ${MSYS2_ROOT}/usr/bin/link.exe ${MSYS2_ROOT}/usr/bin/!link.exe`.noThrow();
-    }
+    await $`mv ${MSYS2_ROOT}/usr/bin/link.exe ${MSYS2_ROOT}/usr/bin/!link.exe`.noThrow();
 }
 
-// Autotools-generated .pc files list `-lm`, which doesn't exist for MSVC.
 async function stripLibmFromMsvcPkgconfig(toolchain: Toolchain) {
-    if (WIN && toolchain === "msvc") {
+    if (toolchain === "msvc") {
         for (const root of [buildRoot(true), buildRoot(false)]) {
             await $`sd -s -- "-lm" "" $(rg -l -- "-lm" ${`${root}/lib/pkgconfig`})`.noThrow().timeout(1000);
         }
@@ -81,22 +75,19 @@ async function stripLibmFromMsvcPkgconfig(toolchain: Toolchain) {
 
 async function buildLibrary(library: Library, options: CliOptions, state: BuildState) {
     const path = `${settings.reposRoot}/${library.name}`,
-        pin = getPin(library),
-        // A library built with the library profile records the profile too, so a retrained one rebuilds it.
-        statePin = (library.statePin?.(pin) ?? pin) + libsProfileTag(library),
-        variants = (
-            options.onlyDebug === options.onlyRelease ? [true, false] : options.onlyDebug ? [true] : [false]
-        ).filter((isDebug) => !library.releaseOnly || !isDebug);
+        pin = getPin(library);
+
+    let variants = [true, false];
+    if (options.onlyDebug !== options.onlyRelease) {
+        variants = [options.onlyDebug];
+    }
+    if (library.releaseOnly) {
+        variants = variants.filter((isDebug) => !isDebug);
+    }
 
     if (
         variants.every((isDebug) =>
-            alreadyBuilt(
-                state,
-                `${library.name}:${isDebug ? "debug" : "release"}`,
-                buildRoot(isDebug),
-                statePin,
-                options,
-            ),
+            alreadyBuilt(state, `${library.name}:${isDebug ? "debug" : "release"}`, buildRoot(isDebug), pin, options),
         )
     ) {
         return;
@@ -111,15 +102,9 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
         if (!existsSync(archivePath)) {
             await $`curl -L -o ${archivePath} ${source.archive}`;
         }
-        if (WIN) {
-            await $`${WIN_TAR} -xf ${archivePath} -C ${path}`;
-        } else if (archivePath.endsWith(".zip")) {
-            await $`unzip -o ${archivePath} -d ${path}`;
-        } else {
-            await $`tar -xf ${archivePath} -C ${path}`;
-        }
+        await $`${WIN_TAR} -xf ${archivePath} -C ${path}`;
 
-        await buildVariants(library, `${path}/${source.subdir}`, variants, state, statePin, options);
+        await buildVariants(library, `${path}/${source.subdir}`, variants, state, pin, options);
         return;
     }
 
@@ -140,7 +125,7 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
         await $`git checkout ${pin} --force`.cwd(path);
     }
 
-    await buildVariants(library, path, variants, state, statePin, options);
+    await buildVariants(library, path, variants, state, pin, options);
 }
 
 async function buildVariants(
@@ -158,8 +143,11 @@ async function buildVariants(
     }
 
     await configureToolchain(options, profileOf(library));
-    // A training run stops once llvm-project's profile is trained (its prepare): the profiled build is the LLVM job's.
-    const trainsLlvm = library.name === "llvm-project" && settings.pgoTraining && llvmPgo() && (settings.pgoIrOnly || !existsSync(settings.llvmProfdata));
+    const trainsLlvm =
+        library.name === "llvm-project" &&
+        settings.pgoTraining &&
+        llvmPgo() &&
+        (settings.pgoIrOnly || !existsSync(settings.llvmProfdata));
     await library.prepare?.({ msvc, path });
     if (trainsLlvm) {
         consola.success(pc.green("LLVM profile trained; skipping the build."));
@@ -218,8 +206,6 @@ async function buildVariants(
         const build = library.build ?? "cmake";
         await (typeof build === "function" ? build(ctx) : BUILDERS[build](library, ctx));
 
-        // Per variant, before markBuilt: the next variant's `git clean -fdx` wipes this one's in-tree artifacts
-        // (PDBs), and a failed hook must not leave the variant recorded as built.
         await library.finish?.(ctx);
         await markBuilt(state, vkey, root, pin, options.toolchain);
     }

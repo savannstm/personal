@@ -1,5 +1,3 @@
-// Locating the Visual Studio MSVC tools, for the msvc toolchain's environment and for the MASM assembler clang lacks.
-
 import { $ } from "dax";
 import { readdir } from "node:fs/promises";
 
@@ -16,7 +14,6 @@ export async function latestVersionDir(dir: string): Promise<string> {
     return latest;
 }
 
-/** The newest MSVC tools directory, e.g. `<VS>/VC/Tools/MSVC/14.44.35207`. */
 export async function msvcToolsRoot(): Promise<string> {
     const vsRoot = (
         await $`${VSWHERE} -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`.text()
