@@ -467,6 +467,8 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
     if (ownRuntimes) {
         // Ahead of CLANG64's lib directories in the link search path, so -lc++, -lunwind and -lomp resolve here.
         ldflags.push(`-L${buildRoot(false)}/lib`);
+        // The static libc++.a doesn't contain libc++abi, and clang's -stdlib=libc++ only adds -lc++ (lld resolves archives order-independently).
+        ldflags.push("-lc++abi", "-lunwind");
     }
 
     if (profile.compilerRt) {

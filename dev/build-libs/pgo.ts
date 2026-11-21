@@ -400,6 +400,7 @@ async function runTrainers(prefix: string, stage: "cs" | "ir"): Promise<Map<stri
                       "-march=x86-64-v3",
                       "-mtune=generic",
                       "-flto=full",
+                      "-DNDEBUG",
                       // Without it lld links the archives' machine code instead of their bitcode, and nothing is LTO'd.
                       "-ffat-lto-objects",
                       `-fprofile-use=${settings.libsProfdata}`,

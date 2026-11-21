@@ -35,7 +35,7 @@ async function buildRuby(p: string, name: string) {
         // 1.8's `inline` functions (lex.c) need gnu89 inline semantics to get an external definition. file.c includes
         // fcntl.h (and so sys/stat.h) before config.h sets _FILE_OFFSET_BITS=64, giving it a smaller `struct stat` than
         // win32.c's rb_w32_stat writes; defining it up front keeps the layout identical.
-        cflags = `${keep(process.env.CFLAGS!)} ${isa} ${name.startsWith("ruby-1.8") ? "-fgnu89-inline -D_FILE_OFFSET_BITS=64" : ""} -fno-strict-aliasing -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int`,
+        cflags = `${keep(process.env.CFLAGS!)} ${isa} ${name.startsWith("ruby-1.8") ? "-fgnu89-inline -D_FILE_OFFSET_BITS=64" : ""} -fno-strict-aliasing -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int -DNDEBUG`,
         ldflags = `${keep(process.env.LDFLAGS!)} ${isa}`;
 
     // Not buildAutoconf: its MSYS-style --prefix is resolved against the current drive by Ruby's native rbinstall, so the

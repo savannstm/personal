@@ -956,7 +956,7 @@ export const LIBRARIES: Library[] = [
     {
         // One minimal build per FFmpeg variant (--ffmpeg-variants), each into `${prefix}/ffmpeg-<variant>`.
         name: "ffmpeg",
-        source: { git: "https://github.com/FFmpeg/FFmpeg", tag: "n9.0.2" },
+        source: { git: "https://github.com/FFmpeg/FFmpeg", tag: "n9.1" },
         profile: { asan: true, debugOpt: false },
         prepare: async ({ msvc, path }) => {
             // Upstream 9.0 treats any lld-link "ignoring unknown argument" warning as a

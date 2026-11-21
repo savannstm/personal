@@ -10,6 +10,10 @@ on:
                 description: "Retrain the PGO profiles even if profiles for this build's sources and compiler are cached"
                 type: boolean
                 default: false
+            skip_pgo:
+                description: "Skip PGO training even if no profile is cached for this build's key"
+                type: boolean
+                default: false
 
 # One build at a time: runs share the cached prefix and build-state.json.
 concurrency:
@@ -62,7 +66,7 @@ jobs:
             # llvm-project's sources and ImageMagick built, hence --only llvm-project; without it only the libraries train.
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Train
-              if: steps.libs.outputs.cache-hit != 'true' || steps.llvm.outputs.cache-hit != 'true'
+              if: ${{ !inputs.skip_pgo && (steps.libs.outputs.cache-hit != 'true' || steps.llvm.outputs.cache-hit != 'true') }}
               shell: pwsh
               run: |
                   if ('${{ steps.llvm.outputs.cache-hit }}' -eq 'true') {
