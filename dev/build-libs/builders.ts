@@ -1,6 +1,6 @@
 import consola from "consola";
 import $ from "dax";
-import { cp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
 import { msvcToolsRoot } from "./msvc.ts";
@@ -32,13 +32,44 @@ export async function copyLib(root: string, from: string, to: string): Promise<v
     await $`cp ${`${root}/lib/${from}`} ${`${root}/lib/${to}`}`;
 }
 
+// Replaces every occurrence (a string literally, a RegExp with its own flags) and throws when nothing matched, so an
+// upstream change can't silently turn a fix into a no-op. `optional` is for edits that only apply to some trees.
+export async function replaceInFile(
+    file: string,
+    from: RegExp | string,
+    to: string,
+    { optional = false } = {},
+): Promise<void> {
+    const text = await readFile(file, "utf8");
+    let search = from,
+        replacement = to;
+    if (typeof from === "string" && text.includes("\r\n")) {
+        search = from.replaceAll("\n", "\r\n");
+        replacement = to.replaceAll("\n", "\r\n");
+    }
+    const result =
+        typeof search === "string" ? text.replaceAll(search, () => replacement) : text.replace(search, replacement);
+    if (result === text) {
+        if (!optional) {
+            throw new Error(`${file}: nothing matched ${String(from)}`);
+        }
+        return;
+    }
+    await writeFile(file, result);
+}
+
 export async function stripDllImport(file: string): Promise<void> {
-    await $`sd -s -- "__declspec(dllimport)" "" ${file}`;
+    await replaceInFile(file, "__declspec(dllimport)", "", { optional: true });
 }
 
 export async function applyPatch(path: string, patch: string): Promise<void> {
+    const file = `${ROOT}/patches/${patch}`;
+    // A patch that reverse-applies is already in the tree (a re-run in a submodule git reset doesn't touch).
+    if ((await $`git apply --check -R ${file}`.cwd(path).quiet().noThrow()).code === 0) {
+        return;
+    }
     try {
-        await $`git apply ${`${ROOT}/patches/${patch}`}`.cwd(path);
+        await $`git apply ${file}`.cwd(path);
     } catch (error) {
         consola.warn(
             pc.yellow(
@@ -152,9 +183,9 @@ export async function buildAutoconf(
         : "";
 
     if (libtool && toolchain === "msvc") {
-        await $`sd -s -- ${"-Fe$tool_output_objdir$soname"} ${"-o $tool_output_objdir$soname"} ${configurePath}`;
-        await $`sd -s -- ${"-Fe$output_objdir/$soname"} ${"-o $output_objdir/$soname"} ${configurePath}`;
-        await $`sd -s -- '-link -EXPORT' "-Xlinker -EXPORT" ${configurePath}`;
+        await replaceInFile(configurePath, "-Fe$tool_output_objdir$soname", "-o $tool_output_objdir$soname");
+        await replaceInFile(configurePath, "-Fe$output_objdir/$soname", "-o $output_objdir/$soname");
+        await replaceInFile(configurePath, "-link -EXPORT", "-Xlinker -EXPORT");
     }
 
     const libsArg = passLibs ? `LIBS="${libs}"` : "";
@@ -165,10 +196,12 @@ export async function buildAutoconf(
 
     if (libtool) {
         const libtoolPath = `${path}/libtool`;
-        await $`sd -s -- "-fuse-ld=*|" "-f*|--target=*|-march=*|-mtune=*|-D*|-g*|-w*|" ${libtoolPath}`.noThrow();
+        await replaceInFile(libtoolPath, "-fuse-ld=*|", "-f*|--target=*|-march=*|-mtune=*|-D*|-g*|-w*|", {
+            optional: true,
+        });
 
         if (toolchain === "msvc") {
-            await $`sd -s -- 'wl=""' 'wl="-Wl,"' ${libtoolPath}`;
+            await replaceInFile(libtoolPath, 'wl=""', 'wl="-Wl,"');
         }
     }
 
@@ -178,7 +211,7 @@ export async function buildAutoconf(
 export async function buildPlain(
     path: string,
     isDebug: boolean,
-    { defFile, defines = [], exportAllSymbols, headers, includeDirs, libName, sources }: PlainArgs,
+    { defFile, defines = [], headers, includeDirs, libName, sources }: PlainArgs,
 ) {
     const { cFlags, includeFlags, ldFlags } = await computeFlags(isDebug),
         defineArgs = defines.map((d) => `-D${d}`).join(" "),
@@ -202,45 +235,14 @@ export async function buildPlain(
         const dllName = `${baseName}.dll`,
             importLibName = isMsvc ? `${baseName}.lib` : `${dllName}.a`,
             implibFlag = isMsvc ? `-Wl,-IMPLIB:${importLibName}` : `-Wl,--out-implib,${importLibName}`,
-            pdbName = `${baseName}.pdb`,
-            exportAllFlag = !isMsvc && exportAllSymbols ? "-Wl,--export-all-symbols" : "";
+            pdbName = `${baseName}.pdb`;
 
-        let resolvedDefFile = defFile;
-        if (isMsvc && exportAllSymbols && !defFile) {
-            const defName = `${baseName}.def`;
-            const stdout = await $`dumpbin /symbols *.o`.cwd(path).quiet().text();
-
-            const symbols = new Set<string>();
-            for (const line of stdout.split("\n")) {
-                if (!line.includes("External") || line.includes("UNDEF")) {
-                    continue;
-                }
-
-                if (!line.includes("notype ()")) {
-                    continue;
-                }
-
-                const name = line.split("|").pop()?.trim();
-                if (!name || name.startsWith("__") || name.startsWith("??_")) {
-                    continue;
-                }
-                symbols.add(name);
-            }
-
-            const defContents = [
-                `LIBRARY ${baseName}`,
-                "EXPORTS",
-                ...[...symbols].sort().map((s) => `    ${s}`),
-            ].join("\n");
-            await writeFile(`${path}/${defName}`, defContents, "utf-8");
-            resolvedDefFile = defName;
-        }
         let defFlag = "";
-        if (resolvedDefFile) {
-            defFlag = isMsvc ? `-Wl,-DEF:${resolvedDefFile}` : resolvedDefFile;
+        if (defFile) {
+            defFlag = isMsvc ? `-Wl,-DEF:${defFile}` : defFile;
         }
 
-        await bash`cd ${msysPath} && ${toolchainState().tools.cc} -shared -o ${dllName} *.o ${ldFlags} ${exportAllFlag} ${defFlag} ${implibFlag}`;
+        await bash`cd ${msysPath} && ${toolchainState().tools.cc} -shared -o ${dllName} *.o ${ldFlags} ${defFlag} ${implibFlag}`;
 
         await $`cp ${dllName} ${`${prefix}/bin/${dllName}`}`.cwd(path);
         await $`cp ${importLibName} ${`${prefix}/lib/${importLibName}`}`.cwd(path);

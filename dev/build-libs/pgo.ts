@@ -7,6 +7,7 @@ import { basename, extname } from "node:path";
 import pc from "picocolors";
 
 import { FFMPEG_VARIANTS, getPin, LIBRARIES } from "./libraries.ts";
+import { latestVersionDir } from "./msvc.ts";
 import { FFMPEG_DEMUXERS, FFMPEG_FIXTURES_DIR, FFMPEG_INPUTS } from "./pgo-fixtures.ts";
 import { buildRepos } from "./runner.ts";
 import {
@@ -636,8 +637,6 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
         lldDir = `${LLVM_PGO_DIR}/lld-train`,
         irProfdata = `${LLVM_PGO_DIR}/ir.profdata`,
         profdata = `${CLANG64}/bin/llvm-profdata.exe`,
-        cflags = optFlags,
-        csCflags = optFlags,
         withLld = targets.includes("lld");
 
     const buildInstrumented = async (dir: string, flags: string, instrumentArgs: string[], active: LlvmTarget[]) => {
@@ -653,7 +652,7 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
         }
     };
 
-    const resourceDir = `${CLANG64}/lib/clang/23`,
+    const resourceDir = `${CLANG64}/lib/clang/${await latestVersionDir(`${CLANG64}/lib/clang`)}`,
         trainRuntime = `--sysroot=${CLANG64} -resource-dir ${resourceDir} -rtlib=compiler-rt --unwindlib=libunwind -L ${CLANG64}/lib`,
         trainCFlags = `${trainRuntime} -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
         trainCxxFlags = `${trainRuntime} -stdlib=libc++ -isystem ${CLANG64}/include/c++/v1 -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
@@ -685,7 +684,7 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
 
         if (active.includes("clang")) {
             await rm(trainDir, { force: true, recursive: true });
-            await configureTrain(dir, trainDir, `${cflags} ${trainCFlags}`, `${cflags} ${trainCxxFlags}`);
+            await configureTrain(dir, trainDir, `${optFlags} ${trainCFlags}`, `${optFlags} ${trainCxxFlags}`);
         }
 
         await Promise.all((await profraws(rawDir)).map((file) => rm(file)));
@@ -775,7 +774,7 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
 
     for (const target of missingIr) {
         await rm(inst, { force: true, recursive: true });
-        await buildInstrumented(inst, cflags, ["-DLLVM_BUILD_INSTRUMENTED=IR"], [target]);
+        await buildInstrumented(inst, optFlags, ["-DLLVM_BUILD_INSTRUMENTED=IR"], [target]);
         const output = settings.llvmIrProfdata[target]!;
         await $`${profdata} merge -output=${output} ${await train(inst, `${inst}/profiles`, [target])}`.env(clang64Env);
         await removeStaleProfiles(output, `llvm-ir-${target}-`);
@@ -795,7 +794,7 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
         .env(clang64Env);
     await buildInstrumented(
         csInst,
-        csCflags,
+        optFlags,
         [
             "-DLLVM_BUILD_INSTRUMENTED=CSIR",
             `-DLLVM_PROFDATA_FILE=${irProfdata}`,

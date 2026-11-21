@@ -2,7 +2,7 @@ import $ from "dax";
 import { existsSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 
-import { applyPatch } from "./builders.ts";
+import { applyPatch, replaceInFile } from "./builders.ts";
 import { trainLlvm } from "./pgo.ts";
 import { CLANG64, CLANG64_PKG_CONFIG, LLVM_TABLEGEN_DIR, llvmPgo, settings } from "./settings.ts";
 import { raw } from "./shell.ts";
@@ -10,6 +10,8 @@ import { marchFlags, profileOf, releaseOptFlags } from "./toolchain.ts";
 import type { Library, ToolchainProfile } from "./types.ts";
 
 const LLVM_SOURCE = { git: "https://github.com/llvm/llvm-project", tag: "llvmorg-23.1.6" },
+    // The resource directory (lib/clang/<major>) follows the tag.
+    LLVM_MAJOR = /\d+/.exec(LLVM_SOURCE.tag)![0],
     LLVM_PROFILE: Partial<ToolchainProfile> = {
         cxxStd: "20",
         debugOpt: false,
@@ -80,7 +82,7 @@ async function buildLlvmTablegen(llvmPath: string) {
     await $`ninja ${LLVM_TABLEGEN_TOOLS}`.cwd(LLVM_TABLEGEN_DIR);
 }
 
-const LLVM_RUNTIMES_ARGS = `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=lib/clang/23 -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
+const LLVM_RUNTIMES_ARGS = `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=lib/clang/${LLVM_MAJOR}-DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
 export const llvmProject: Library = {
     name: "llvm-project",
@@ -102,7 +104,9 @@ export const llvmProject: Library = {
             "llvm",
             "third-party",
         ]);
-        await $`sd -s "add_subdirectory(docs)" "" lld/CMakeLists.txt lldb/CMakeLists.txt`.cwd(path);
+        for (const project of ["lld", "lldb"]) {
+            await replaceInFile(`${path}/${project}/CMakeLists.txt`, "add_subdirectory(docs)", "");
+        }
         await buildLlvmTablegen(path);
         const profile = profileOf(llvmProject),
             optFlags = [...marchFlags(profile), ...releaseOptFlags(false, false)].join(" ");

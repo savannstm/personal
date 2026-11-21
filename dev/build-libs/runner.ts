@@ -1,7 +1,7 @@
 import consola from "consola";
 import $ from "dax";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import pc from "picocolors";
 
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
@@ -66,16 +66,47 @@ async function hideMsysLinkExe() {
 }
 
 async function stripLibmFromMsvcPkgconfig(toolchain: Toolchain) {
-    if (toolchain === "msvc") {
-        for (const root of [buildRoot(true), buildRoot(false)]) {
-            await $`sd -s -- "-lm" "" $(rg -l -- "-lm" ${`${root}/lib/pkgconfig`})`.noThrow().timeout(1000);
-        }
+    if (toolchain !== "msvc") {
+        return;
     }
+    for (const root of [buildRoot(true), buildRoot(false)]) {
+        // \b after "m" keeps -lmimalloc and friends intact; a \b before "-" would never match after a space.
+        await $`sd -- ${String.raw`-lm\b`} "" $(rg -l -- "-lm" ${`${root}/lib/pkgconfig`})`.noThrow().timeout(1000);
+    }
+}
+
+const BRANCH_TAGS = new Set(["main", "master", "devel"]);
+
+async function syncGit(path: string, { git, tag }: { git: string; tag: string }) {
+    if (!existsSync(path)) {
+        try {
+            await $`git clone --branch ${tag} --depth 1 ${git} ${path}`;
+        } catch {
+            consola.warn(pc.yellow("Shallow clone failed, retrying with a full clone"));
+            await $`git clone --branch ${tag} ${git} ${path}`;
+        }
+        return;
+    }
+    if (BRANCH_TAGS.has(tag)) {
+        // Patches from the previous run are still in the tree and could block the pull.
+        await $`git reset --hard`.cwd(path);
+        await $`git pull`.cwd(path);
+    } else {
+        await $`git fetch --depth=1 origin tag ${tag}`.cwd(path);
+    }
+    await $`git checkout ${tag} --force`.cwd(path);
+}
+
+// What the build state compares against: a library that builds several variants also records which ones.
+function stampOf(library: Library, pin: string): string {
+    return library.variants ? `${pin}|${library.variants()}` : pin;
 }
 
 async function buildLibrary(library: Library, options: CliOptions, state: BuildState) {
     const path = `${settings.reposRoot}/${library.name}`,
-        pin = getPin(library);
+        { source } = library,
+        git = "git" in source ? source : null;
+    let pin = getPin(library);
 
     let variants = [true, false];
     if (options.onlyDebug !== options.onlyRelease) {
@@ -85,44 +116,46 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
         variants = variants.filter((isDebug) => !isDebug);
     }
 
+    // A branch moves: update it first so the build state is keyed on the commit, not the branch name.
+    const tracksBranch = git !== null && BRANCH_TAGS.has(git.tag);
+    if (git && tracksBranch) {
+        await syncGit(path, git);
+        pin = `${git.tag}@${(await $`git rev-parse HEAD`.cwd(path).text()).trim()}`;
+    }
+
     if (
         variants.every((isDebug) =>
-            alreadyBuilt(state, `${library.name}:${isDebug ? "debug" : "release"}`, buildRoot(isDebug), pin, options),
+            alreadyBuilt(
+                state,
+                `${library.name}:${isDebug ? "debug" : "release"}`,
+                buildRoot(isDebug),
+                stampOf(library, pin),
+                options,
+            ),
         )
     ) {
         return;
     }
 
-    const { source } = library;
     if ("archive" in source) {
+        const { archive, subdir } = source;
         await rm(path, { force: true, recursive: true });
         await mkdir(path, { recursive: true });
-        const fileName = source.archive.split("/").pop()?.split("?")[0] ?? "archive",
+        const fileName = archive.split("/").pop()?.split("?")[0] ?? "archive",
             archivePath = `${path}.${fileName.split(".").slice(1).join(".") || "tmp"}`;
         if (!existsSync(archivePath)) {
-            await $`curl -L -o ${archivePath} ${source.archive}`;
+            // -f: an HTTP error must not be saved as the archive; the rename keeps an interrupted download out of the cache.
+            await $`curl -fL -o ${`${archivePath}.part`} ${archive}`;
+            await rename(`${archivePath}.part`, archivePath);
         }
         await $`${WIN_TAR} -xf ${archivePath} -C ${path}`;
 
-        await buildVariants(library, `${path}/${source.subdir}`, variants, state, pin, options);
+        await buildVariants(library, `${path}/${subdir}`, variants, state, pin, options);
         return;
     }
 
-    if (!existsSync(path)) {
-        try {
-            await $`git clone --branch ${pin} --depth 1 ${source.git} ${path}`;
-        } catch {
-            consola.warn(pc.yellow("Shallow clone failed, retrying with a full clone"));
-            await $`git clone --branch ${pin} ${source.git} ${path}`;
-        }
-    } else {
-        if (source.tag !== "main" && source.tag !== "master" && source.tag !== "devel") {
-            await $`git fetch --depth=1 origin tag ${source.tag}`.cwd(path);
-        } else {
-            await $`git pull`.cwd(path);
-        }
-
-        await $`git checkout ${pin} --force`.cwd(path);
+    if (!tracksBranch) {
+        await syncGit(path, source);
     }
 
     await buildVariants(library, path, variants, state, pin, options);
@@ -176,7 +209,7 @@ async function buildVariants(
             }
         }
 
-        if (alreadyBuilt(state, vkey, root, pin, options)) {
+        if (alreadyBuilt(state, vkey, root, stampOf(library, pin), options)) {
             consola.info(pc.cyan(`[${library.name}] Already built at ${pin} (${variant}), skipping.`));
             continue;
         }
@@ -207,7 +240,7 @@ async function buildVariants(
         await (typeof build === "function" ? build(ctx) : BUILDERS[build](library, ctx));
 
         await library.finish?.(ctx);
-        await markBuilt(state, vkey, root, pin, options.toolchain);
+        await markBuilt(state, vkey, root, stampOf(library, pin), options.toolchain);
     }
 }
 
@@ -217,16 +250,23 @@ async function loadBuildState(): Promise<BuildState> {
     }
     try {
         return JSON.parse(await readFile(BUILD_STATE_FILE, "utf8")) as BuildState;
-    } catch {
+    } catch (error) {
+        consola.warn(
+            pc.yellow(
+                `Ignoring unreadable ${BUILD_STATE_FILE} (${error instanceof Error ? error.message : String(error)}): everything will be rebuilt.`,
+            ),
+        );
         return { prefixes: {} };
     }
 }
 
 async function saveBuildState(state: BuildState): Promise<void> {
-    await writeFile(BUILD_STATE_FILE, JSON.stringify(state, null, 4));
+    // Write-then-rename: a kill mid-write must not leave a truncated state file.
+    await writeFile(`${BUILD_STATE_FILE}.tmp`, JSON.stringify(state, null, 4));
+    await rename(`${BUILD_STATE_FILE}.tmp`, BUILD_STATE_FILE);
 }
 
-function alreadyBuilt(state: BuildState, key: string, prefix: string, pin: string, options: CliOptions): boolean {
+export function alreadyBuilt(state: BuildState, key: string, prefix: string, pin: string, options: CliOptions): boolean {
     const prefixState = state.prefixes[prefix];
     if (!prefixState || prefixState.toolchain !== options.toolchain) {
         return false;

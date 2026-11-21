@@ -1,5 +1,4 @@
-import $ from "dax";
-
+import { replaceInFile } from "./builders.ts";
 import { buildRoot, LLVM_MINGW_I686, ROOT, settings } from "./settings.ts";
 import { bash, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
@@ -31,32 +30,42 @@ async function buildRuby(p: string, name: string) {
     const extraEnv = `RUBYOPT= PATH="${bin}:$PATH" CC=${triple}-clang CXX=${triple}-clang++ AR=${triple}-ar RANLIB=${triple}-ranlib STRIP=${triple}-strip MAKEFLAGS="LDSHARED=true WINDRES=${triple}-windres DLLWRAP=${toMsysPath(`${ROOT}/patches/ruby/dllwrap.sh`)}" CFLAGS="${cflags}" LDFLAGS="${ldflags}"`;
 
     if (name === "ruby-1.8.1") {
-        await $`sd -s '#ifdef __MINGW32__\nstruct timezone {' '#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\n#define _TIMEZONE_DEFINED\nstruct timezone {' win32/win32.h`.cwd(
-            p,
+        await replaceInFile(
+            `${p}/win32/win32.h`,
+            "#ifdef __MINGW32__\nstruct timezone {",
+            "#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\n#define _TIMEZONE_DEFINED\nstruct timezone {",
         );
-        await $`sd -s 'gettimeofday(struct timeval *, struct timezone *)' 'gettimeofday(struct timeval *, void *)' win32/win32.h`.cwd(
-            p,
+        await replaceInFile(
+            `${p}/win32/win32.h`,
+            "gettimeofday(struct timeval *, struct timezone *)",
+            "gettimeofday(struct timeval *, void *)",
         );
-        await $`sd -s 'gettimeofday(struct timeval *tv, struct timezone *tz)' 'gettimeofday(struct timeval *tv, void *tz)' win32/win32.c`.cwd(
-            p,
+        await replaceInFile(
+            `${p}/win32/win32.c`,
+            "gettimeofday(struct timeval *tv, struct timezone *tz)",
+            "gettimeofday(struct timeval *tv, void *tz)",
         );
     }
 
     if (name === "ruby-1.8.7") {
-        await $`sd -f m '^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$' '#if defined($1) && !defined(__MINGW32__)' eval.c`.cwd(
-            p,
+        await replaceInFile(
+            `${p}/eval.c`,
+            /^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$/gm,
+            "#if defined($1) && !defined(__MINGW32__)",
         );
     }
 
     if (name === "ruby-1.9.2") {
-        await $`sd -s '#define _stati64(path, st) rb_w32_stati64(path, st)' '#define _stati64 _stat64\n#define _stat64(path, st) rb_w32_stati64(path, st)' include/ruby/win32.h`.cwd(
-            p,
+        await replaceInFile(
+            `${p}/include/ruby/win32.h`,
+            "#define _stati64(path, st) rb_w32_stati64(path, st)",
+            "#define _stati64 _stat64\n#define _stat64(path, st) rb_w32_stati64(path, st)",
         );
     }
 
     await bash`cd ${toMsysPath(p)} && ${extraEnv} ./configure --host=${triple} --disable-install-doc --disable-rubygems --with-out-ext='*' --disable-shared --enable-static ${legacy ? "ac_cv_func_clock_gettime=no" : ""} --prefix=${buildRoot(false)}/${name}`;
     if (name === "ruby-1.8.1") {
-        await $`sd -s 'dllwrap --target=mingw32 --driver-name=$(CC)' '$(DLLWRAP)' GNUmakefile`.cwd(p);
+        await replaceInFile(`${p}/GNUmakefile`, "dllwrap --target=mingw32 --driver-name=$(CC)", "$(DLLWRAP)");
     }
 
     const zlibDir = `${settings.reposRoot}/zlib-i686`,
@@ -69,7 +78,7 @@ async function buildRuby(p: string, name: string) {
             ? "touch enc_protos.inc enc_calls.inc enc_objs.txt"
             : `sh ${toMsysPath(`${ROOT}/patches/ruby/encs.sh`)}`,
         initProto = legacy ? "" : "void ruby_init_ext(const char *name, void (*init)(void));";
-    await bash`mkdir -p ${toMsysPath(zlibDir)} && cd ${toMsysPath(zlibDir)} && if [ ! -f libz.a ]; then export PATH="${bin}:$PATH" && curl -sL -o zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz && tar xf zlib.tar.gz --strip-components=1 && for f in ${zlibObjs}; do ${triple}-clang -O2 -c $f.c -o $f.o || exit 1; done && ${triple}-ar rcs libz.a *.o; fi`;
+    await bash`mkdir -p ${toMsysPath(zlibDir)} && cd ${toMsysPath(zlibDir)} && if [ ! -f libz.a ]; then export PATH="${bin}:$PATH" && curl -fsL -o zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz && tar xf zlib.tar.gz --strip-components=1 && for f in ${zlibObjs}; do ${triple}-clang -O2 -c $f.c -o $f.o || exit 1; done && ${triple}-ar rcs libz.a *.o; fi`;
 
     const zlibCflags = `-I${toMsysPath(zlibDir)} -Wno-error=incompatible-pointer-types`;
     await bash`cd ${toMsysPath(p)} && export ${extraEnv} && LIBA=$(printf 'print:\n\t@echo $(LIBRUBY_A)\n' | make -s -f Makefile -f - print) && make miniruby.exe $LIBA && ${encsStep} && printf '#include "ruby.h"

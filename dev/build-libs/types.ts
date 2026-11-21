@@ -56,6 +56,7 @@ export interface Library {
     mesonCommand?: string[];
     archPkg?: string;
     version?: string;
+    variants?: () => string; // a library with per-variant steps: which variants this run builds, so a changed list rebuilds
 }
 
 export interface BuildState {
@@ -68,11 +69,11 @@ export interface Tools {
     asm: string;
     cc: string;
     cxx: string;
-    dlltool: null | string;
+    dlltool: string;
     objcopy: string;
     objdump: string;
     ranlib: string;
-    rc: null | string;
+    rc: string;
     strip: string;
 }
 
@@ -119,5 +120,4 @@ export interface PlainArgs {
     libName: string;
     sources: string[];
     defFile?: string;
-    exportAllSymbols?: boolean;
 }

@@ -5,7 +5,8 @@ import { MSYS2_ROOT } from "./settings.ts";
 export const raw = (text: string) => $.rawArg(text);
 
 function toMsysList(envVar: string): string {
-    return (process.env[envVar] ?? "").split(";").map(toMsysPath).join(":");
+    // An empty entry would mean "the current directory" to MSYS, so a trailing ";" must not become one.
+    return (process.env[envVar] ?? "").split(";").filter(Boolean).map(toMsysPath).join(":");
 }
 
 export function toMsysPath(path: string) {
@@ -18,7 +19,7 @@ export function bash(strings: TemplateStringsArray, ...values: any[]) {
     const innerCommand = strings.reduce((acc, s, i) => acc + s + (i < values.length ? String(values[i]) : ""), "");
 
     const includeLibExports = `export INCLUDE="${toMsysList("INCLUDE")}" && export LIB="${toMsysList("LIB")}"`;
-    const pkgConfigExport = `export PKG_CONFIG_PATH="${toMsysList("PKG_CONFIG_PATH")}:$PKG_CONFIG_PATH"`;
+    const pkgConfigExport = `export PKG_CONFIG_PATH="${toMsysList("PKG_CONFIG_PATH")}\${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"`;
     const msvcExports = `${includeLibExports} && ${pkgConfigExport}`;
 
     return $`MSYS2_PATH_TYPE=inherit ${MSYS2_ROOT}/usr/bin/bash.exe -lc ${`${msvcExports} && ${innerCommand}`}`;

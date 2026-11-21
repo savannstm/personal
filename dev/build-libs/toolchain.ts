@@ -79,10 +79,12 @@ export async function computeFlags(isDebug: boolean) {
     const cFlags = `-std=gnu17 ${opt}`,
         cxxFlags = `-std=gnu++${flags.cxxStd} ${libcxx} ${opt}`,
         includeFlags = (
-            await bash`shopt -s nullglob; PKG_CONFIG_PATH="${pkgconfPaths}" pkg-config --cflags $(basename -s .pc ${`${root}/lib/pkgconfig/*.pc`}) 2>/dev/null | sd -s -- "-I" "-isystem "`
+            await bash`shopt -s nullglob; PKG_CONFIG_PATH="${pkgconfPaths}" pkg-config --cflags $(basename -s .pc ${`${root}/lib/pkgconfig/*.pc`}) 2>/dev/null`
                 .noThrow()
                 .text()
-        ).trim();
+        )
+            .trim()
+            .replaceAll("-I", "-isystem ");
 
     return { cFlags, cxxFlags, includeFlags, ldFlags, root };
 }
@@ -159,9 +161,9 @@ export async function updateEnv(isDebug: boolean) {
         OBJDUMP: tools.objdump,
         PKG_CONFIG_PATH: pkgConfPath,
         RANLIB: tools.ranlib,
-        RC: tools.rc ?? "",
+        RC: tools.rc,
         STRIP: tools.strip,
-        WINDRES: tools.rc ?? "",
+        WINDRES: tools.rc,
     });
 }
 
@@ -523,13 +525,9 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
         `set(CMAKE_OBJCOPY ${tools.objcopy})`,
         `set(CMAKE_OBJDUMP ${tools.objdump})`,
         `set(CMAKE_ADDR2LINE ${tools.addr2line})`,
+        `set(CMAKE_DLLTOOL ${tools.dlltool})`,
+        `set(CMAKE_RC_COMPILER ${tools.rc})`,
     );
-    if (tools.dlltool) {
-        lines.push(`set(CMAKE_DLLTOOL ${tools.dlltool})`);
-    }
-    if (tools.rc) {
-        lines.push(`set(CMAKE_RC_COMPILER ${tools.rc})`);
-    }
     lines.push(`set(CMAKE_GENERATOR Ninja CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_C_COMPILER_LAUNCHER sccache CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_CXX_COMPILER_LAUNCHER sccache CACHE STRING "" FORCE)`);
@@ -635,10 +633,8 @@ function toIni(b: BuildConfig, tools: Tools): string {
         `ranlib = '${tools.ranlib}'`,
         `strip = '${tools.strip}'`,
         `objcopy = '${tools.objcopy}'`,
+        `windres = '${tools.rc}'`,
     );
-    if (tools.rc) {
-        lines.push(`windres = '${tools.rc}'`);
-    }
     lines.push("[built-in options]");
     lines.push(`c_std = 'gnu${C_STD}'`);
     lines.push(`cpp_std = 'gnu++${b.cxxStd}'`);
