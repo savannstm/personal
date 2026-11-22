@@ -66,3 +66,8 @@ export function llvmTargets(): LlvmTarget[] {
 export function llvmPgo(): boolean {
     return settings.pgo.has("clang") || settings.pgo.has("lld");
 }
+
+// A library-profile training run stops after the PGO library chain: nothing else is built.
+export function libsTrainingOnly(): boolean {
+    return settings.pgoTraining && settings.pgo.has("libs") && !llvmPgo();
+}

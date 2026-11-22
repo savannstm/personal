@@ -18,7 +18,7 @@ import {
 } from "./pgo-common.ts";
 import { FFMPEG_DEMUXERS, FFMPEG_FIXTURES_DIR, FFMPEG_INPUTS } from "./pgo-fixtures.ts";
 import { buildRepos } from "./runner.ts";
-import { CLANG64, llvmTargets, PROFILES_DIR, ROOT, settings, WIN_TAR } from "./settings.ts";
+import { CLANG64, llvmPgo, llvmTargets, PROFILES_DIR, ROOT, settings, WIN_TAR } from "./settings.ts";
 import { CLANG_WIN_TARGET, configureToolchain, CONSUMER_PROFILE, marchFlags, releaseOptFlags } from "./toolchain.ts";
 import type { Library } from "./types.ts";
 

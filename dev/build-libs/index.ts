@@ -12,6 +12,7 @@ import { LIBRARIES } from "./libraries.ts";
 import { libsPgo, resolvePgoProfiles } from "./pgo.ts";
 import { buildRepos } from "./runner.ts";
 import {
+    libsTrainingOnly,
     llvmPgo,
     llvmTargets,
     MAGICK_PGO_VARIANT,
@@ -223,7 +224,6 @@ if (settings.pgo.has("libs")) {
     await libsPgo();
 }
 
-const libsTrainingOnly = settings.pgoTraining && settings.pgo.has("libs") && !llvmPgo();
-if (!libsTrainingOnly) {
+if (!libsTrainingOnly()) {
     await buildRepos();
 }

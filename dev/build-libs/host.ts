@@ -10,7 +10,7 @@ import {
 import { LIBRARIES, MSYS2_EXTRA, shouldBuildLibrary } from "./libraries.ts";
 import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
 import { LLVM_MINGW_I686 } from "./ruby.ts";
-import { CLANG64, MSYS2_ROOT, VSWHERE } from "./settings.ts";
+import { CLANG64, libsTrainingOnly, MSYS2_ROOT, VSWHERE } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { Toolchain } from "./types.ts";
 
@@ -22,7 +22,9 @@ const HOST_ARCH = "Hostx64",
 const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "rg", "sccache", "sd"] as const;
 
 // llvm-mingw is only needed by the ruby builds. cargo-c and cargo-binstall are installed by the rust builder when it needs them.
-const needsRuby = () => LIBRARIES.some((library) => library.name.startsWith("ruby-") && shouldBuildLibrary(library.name));
+const needsRuby = () =>
+    !libsTrainingOnly() &&
+    LIBRARIES.some((library) => library.name.startsWith("ruby-") && shouldBuildLibrary(library.name));
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
