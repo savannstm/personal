@@ -411,7 +411,8 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
     const march = marchFlags(profile),
         userClang = profile.consumer === true && toolchain === "clang",
         builtins = ownClang || userClang ? [] : ["-lclang_rt.builtins-x86_64"],
-        cflags = ["-pipe", ...march, "-w", "-fopenmp", ...builtins],
+        // Link-only: in cflags, meson's compile-only probes reject it under the PGO path's -Wno-everything.
+        cflags = ["-pipe", ...march, "-w", "-fopenmp"],
         ldflags = [...march, "-fopenmp", ...builtins];
 
     cflags.push("-fuse-ld=lld");
