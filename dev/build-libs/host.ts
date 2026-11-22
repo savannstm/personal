@@ -7,7 +7,7 @@ import {
     MSYS2_MINGW_PACKAGES,
     toolDirs,
 } from "../../personal/install-tools/toolchain.ts";
-import { LIBRARIES, MSYS2_EXTRA } from "./libraries.ts";
+import { LIBRARIES, MSYS2_EXTRA, shouldBuildLibrary } from "./libraries.ts";
 import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
 import { LLVM_MINGW_I686 } from "./ruby.ts";
 import { CLANG64, MSYS2_ROOT, VSWHERE } from "./settings.ts";
@@ -19,18 +19,10 @@ const MSVC_LLVM_ROOT = "C:/PATH/llvm";
 const HOST_ARCH = "Hostx64",
     TARGET_ARCH = "x64";
 
-const REQUIRED_UTILITIES = [
-    "cargo-binstall",
-    "cargo-c",
-    "clang",
-    "cmake",
-    "git",
-    "meson",
-    "ninja",
-    "rg",
-    "sccache",
-    "sd",
-] as const;
+const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "rg", "sccache", "sd"] as const;
+
+// llvm-mingw is only needed by the ruby builds. cargo-c and cargo-binstall are installed by the rust builder when it needs them.
+const needsRuby = () => LIBRARIES.some((library) => library.name.startsWith("ruby-") && shouldBuildLibrary(library.name));
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
@@ -100,7 +92,7 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
 export async function verifyPrerequisites(toolchain: Toolchain): Promise<void> {
     const missing = await checkUtilities(REQUIRED_UTILITIES);
 
-    if (!existsSync(`${LLVM_MINGW_I686}/bin/i686-w64-mingw32-clang.exe`)) {
+    if (needsRuby() && !existsSync(`${LLVM_MINGW_I686}/bin/i686-w64-mingw32-clang.exe`)) {
         missing.push(`llvm-mingw (${LLVM_MINGW_I686})`);
     }
 
@@ -137,7 +129,7 @@ export async function installToolchainPackages(toolchain: Toolchain) {
     if (toolchain === "msvc") {
         await bash`pacman -Syuq --needed --noconfirm ${MSYS2_BASE_PACKAGES.join(" ")} >/dev/null 2>&1`;
     } else {
-        const mingwPackages = [...MSYS2_MINGW_PACKAGES, ...msys2LibraryPackages()].map(
+        const mingwPackages = [...MSYS2_MINGW_PACKAGES, "ripgrep", ...msys2LibraryPackages()].map(
             (name) => `mingw-w64-clang-x86_64-${name}`,
         );
         await bash`pacman -Syuq --needed --noconfirm ${[...MSYS2_BASE_PACKAGES, ...mingwPackages].join(" ")}`;

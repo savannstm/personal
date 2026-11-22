@@ -1,9 +1,9 @@
 import consola from "consola";
 import $ from "dax";
-import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
-import { buildDir, buildRoot, ROOT, TOOLCHAINS_DIR } from "./settings.ts";
+import { buildDir, buildRoot, ROOT, TOOLCHAINS_DIR, WIN_TAR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import { computeFlags, rustPlatform, toolchainState } from "./toolchain.ts";
 import type { Ctx, Library } from "./types.ts";
@@ -105,14 +105,26 @@ function rustTarget(): string {
     return toolchainState().toolchain === "msvc" ? "x86_64-pc-windows-msvc" : "x86_64-pc-windows-gnullvm";
 }
 
+async function installBinstall() {
+    if (await $.which("cargo-binstall")) {
+        return;
+    }
+    const bin = `${process.env.CARGO_HOME ?? `${process.env.USERPROFILE}/.cargo`}/bin`.replaceAll("\\", "/"),
+        zip = `${bin}/cargo-binstall.zip`;
+    mkdirSync(bin, { recursive: true });
+    await $`curl -fL -o ${zip} https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-pc-windows-msvc.zip`;
+    await $`${WIN_TAR} -xf ${zip} -C ${bin}`;
+    rmSync(zip);
+}
+
 function ensureCargoC() {
     const target = rustTarget();
-    cargoC ??= $`cargo cinstall --help`
-        .quiet()
-        .noThrow()
-        .then(
-            ({ code }) => code === 0 || $`cargo binstall --no-confirm --targets ${target} cargo-c`,
-        )! as Promise<unknown>;
+    cargoC ??= (async () => {
+        if ((await $`cargo cinstall --help`.quiet().noThrow()).code !== 0) {
+            await installBinstall();
+            await $`cargo binstall --no-confirm --targets ${target} cargo-c`;
+        }
+    })();
     return cargoC;
 }
 
