@@ -396,7 +396,7 @@ function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
         cflags.push("-fms-runtime-lib=static");
         ldflags.push("-fms-runtime-lib=static");
     } else {
-        cflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
+        // Link-only: meson's compile probes reject them as unused under the PGO path's -Wno-everything.
         ldflags.push("-static", "-static-libgcc", "-static-libstdc++", "-static-openmp");
     }
 
@@ -433,7 +433,6 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
         ldflags.push("-lc++abi", "-lunwind");
     }
 
-    cflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
     ldflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");
 
     const target = resolveWinTarget(toolchain);
