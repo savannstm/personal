@@ -187,8 +187,10 @@ static MagickWand *withAlpha(MagickWand *rgb) {
             rgba[i * 4 + 2] = blue;
             rgba[i * 4 + 3] = (unsigned char)(fade <= 0 ? 0 : fade >= 1 ? 255 : fade * 255);
         }
-        MagickWand *alpha = NewMagickWand();
-        if (MagickConstituteImage(alpha, width, height, "RGBA", CharPixel, rgba) == MagickTrue) {
+        // A clone, not a constituted image: ConstituteImage leaves image_info NULL, which MagnifyImage dereferences.
+        MagickWand *alpha = CloneMagickWand(rgb);
+        MagickSetImageAlphaChannel(alpha, ActivateAlphaChannel);
+        if (MagickImportImagePixels(alpha, 0, 0, width, height, "RGBA", CharPixel, rgba) == MagickTrue) {
             DestroyMagickWand(out);
             out = alpha;
         } else {
