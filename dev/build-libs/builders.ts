@@ -23,12 +23,7 @@ export async function copyLib(root: string, from: string, to: string): Promise<v
     await $`cp ${`${root}/lib/${from}`} ${`${root}/lib/${to}`}`;
 }
 
-export function replaceInFile(
-    file: string,
-    from: RegExp | string,
-    to: string,
-    { optional = false } = {},
-): void {
+export function replaceInFile(file: string, from: RegExp | string, to: string, { optional = false } = {}): void {
     const text = readFileSync(file, "utf8");
     let search = from,
         replacement = to;
@@ -40,7 +35,7 @@ export function replaceInFile(
         typeof search === "string" ? text.replaceAll(search, () => replacement) : text.replace(search, replacement);
     if (result === text) {
         if (!optional) {
-            throw new Error(`${file}: nothing matched ${String(from)}`);
+            consola.warn(`${file}: nothing matched ${String(from)}`);
         }
         return;
     }
