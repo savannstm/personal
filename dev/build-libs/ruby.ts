@@ -1,7 +1,9 @@
 import { replaceInFile } from "./builders.ts";
-import { buildRoot, LLVM_MINGW_I686, ROOT, settings } from "./settings.ts";
+import { buildRoot, ROOT, settings } from "./settings.ts";
 import { bash, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
+
+export const LLVM_MINGW_I686 = "C:/PATH/llvm-mingw-msvcrt-i686";
 
 export function ruby(name: string, archive: string, version: string): Library {
     return {
@@ -30,17 +32,17 @@ async function buildRuby(p: string, name: string) {
     const extraEnv = `RUBYOPT= PATH="${bin}:$PATH" CC=${triple}-clang CXX=${triple}-clang++ AR=${triple}-ar RANLIB=${triple}-ranlib STRIP=${triple}-strip MAKEFLAGS="LDSHARED=true WINDRES=${triple}-windres DLLWRAP=${toMsysPath(`${ROOT}/patches/ruby/dllwrap.sh`)}" CFLAGS="${cflags}" LDFLAGS="${ldflags}"`;
 
     if (name === "ruby-1.8.1") {
-        await replaceInFile(
+        replaceInFile(
             `${p}/win32/win32.h`,
             "#ifdef __MINGW32__\nstruct timezone {",
             "#if defined(__MINGW32__) && !defined(_TIMEZONE_DEFINED)\n#define _TIMEZONE_DEFINED\nstruct timezone {",
         );
-        await replaceInFile(
+        replaceInFile(
             `${p}/win32/win32.h`,
             "gettimeofday(struct timeval *, struct timezone *)",
             "gettimeofday(struct timeval *, void *)",
         );
-        await replaceInFile(
+        replaceInFile(
             `${p}/win32/win32.c`,
             "gettimeofday(struct timeval *tv, struct timezone *tz)",
             "gettimeofday(struct timeval *tv, void *tz)",
@@ -48,7 +50,7 @@ async function buildRuby(p: string, name: string) {
     }
 
     if (name === "ruby-1.8.7") {
-        await replaceInFile(
+        replaceInFile(
             `${p}/eval.c`,
             /^#ifdef (CLOCK_(?:MONOTONIC|REALTIME))$/gm,
             "#if defined($1) && !defined(__MINGW32__)",
@@ -56,7 +58,7 @@ async function buildRuby(p: string, name: string) {
     }
 
     if (name === "ruby-1.9.2") {
-        await replaceInFile(
+        replaceInFile(
             `${p}/include/ruby/win32.h`,
             "#define _stati64(path, st) rb_w32_stati64(path, st)",
             "#define _stati64 _stat64\n#define _stat64(path, st) rb_w32_stati64(path, st)",
@@ -65,7 +67,7 @@ async function buildRuby(p: string, name: string) {
 
     await bash`cd ${toMsysPath(p)} && ${extraEnv} ./configure --host=${triple} --disable-install-doc --disable-rubygems --with-out-ext='*' --disable-shared --enable-static ${legacy ? "ac_cv_func_clock_gettime=no" : ""} --prefix=${buildRoot(false)}/${name}`;
     if (name === "ruby-1.8.1") {
-        await replaceInFile(`${p}/GNUmakefile`, "dllwrap --target=mingw32 --driver-name=$(CC)", "$(DLLWRAP)");
+        replaceInFile(`${p}/GNUmakefile`, "dllwrap --target=mingw32 --driver-name=$(CC)", "$(DLLWRAP)");
     }
 
     const zlibDir = `${settings.reposRoot}/zlib-i686`,

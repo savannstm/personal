@@ -1,4 +1,5 @@
 import { $ } from "dax";
+import { existsSync } from "node:fs";
 
 import {
     composePath,
@@ -8,14 +9,28 @@ import {
 } from "../../personal/install-tools/toolchain.ts";
 import { LIBRARIES, MSYS2_EXTRA } from "./libraries.ts";
 import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
-import { CLANG64, MSVC_LLVM_ROOT, VSWHERE } from "./settings.ts";
+import { LLVM_MINGW_I686 } from "./ruby.ts";
+import { CLANG64, MSYS2_ROOT, VSWHERE } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { Toolchain } from "./types.ts";
+
+const MSVC_LLVM_ROOT = "C:/PATH/llvm";
 
 const HOST_ARCH = "Hostx64",
     TARGET_ARCH = "x64";
 
-const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "sd", "sccache"] as const;
+const REQUIRED_UTILITIES = [
+    "cargo-binstall",
+    "cargo-c",
+    "clang",
+    "cmake",
+    "git",
+    "meson",
+    "ninja",
+    "rg",
+    "sccache",
+    "sd",
+] as const;
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
@@ -85,6 +100,10 @@ export async function setupToolchainEnv(toolchain: Toolchain) {
 export async function verifyPrerequisites(toolchain: Toolchain): Promise<void> {
     const missing = await checkUtilities(REQUIRED_UTILITIES);
 
+    if (!existsSync(`${LLVM_MINGW_I686}/bin/i686-w64-mingw32-clang.exe`)) {
+        missing.push(`llvm-mingw (${LLVM_MINGW_I686})`);
+    }
+
     if (toolchain === "msvc") {
         try {
             await $`${VSWHERE} -latest -products '*' -property installationPath`.quiet();
@@ -123,6 +142,9 @@ export async function installToolchainPackages(toolchain: Toolchain) {
         );
         await bash`pacman -Syuq --needed --noconfirm ${[...MSYS2_BASE_PACKAGES, ...mingwPackages].join(" ")}`;
     }
+
+    // MSYS2's coreutils link.exe collides with the linker's name.
+    await $`mv ${MSYS2_ROOT}/usr/bin/link.exe ${MSYS2_ROOT}/usr/bin/!link.exe`.noThrow();
 
     if (process.env.CI) {
         await bash`rm -rf /var/cache/pacman/pkg/*`;

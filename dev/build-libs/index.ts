@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import consola from "consola";
 import { $ } from "dax";
 import { basename, resolve } from "node:path";
@@ -7,7 +7,8 @@ import pc from "picocolors";
 
 import { checkLibraryUpdates } from "./check-updates.ts";
 import { installToolchainPackages, setupToolchainEnv, verifyPrerequisites } from "./host.ts";
-import { FFMPEG_VARIANTS, LIBRARIES } from "./libraries.ts";
+import { FFMPEG_VARIANTS } from "./ffmpeg.ts";
+import { LIBRARIES } from "./libraries.ts";
 import { libsPgo, resolvePgoProfiles } from "./pgo.ts";
 import { buildRepos } from "./runner.ts";
 import {
@@ -20,20 +21,14 @@ import {
     type PgoTarget,
     settings,
 } from "./settings.ts";
-import { configureToolchain, CONSUMER_PROFILE, isToolchain, TOOLCHAINS } from "./toolchain.ts";
-import type { CliOptions } from "./types.ts";
+import { configureToolchain, CONSUMER_PROFILE, TOOLCHAINS } from "./toolchain.ts";
+import type { Toolchain } from "./types.ts";
 
 function splitList(value: string | undefined): string[] {
     return (value ?? "")
         .split(",")
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
-}
-
-function validateToolchain(toolchain: string): void {
-    if (!isToolchain(toolchain)) {
-        throw new Error(`Invalid toolchain "${toolchain}". Valid toolchains are: ${TOOLCHAINS.join(", ")}.`);
-    }
 }
 
 function parseMagickVariants(value: string): MagickVariant[] {
@@ -59,14 +54,14 @@ function parseFfmpegVariants(value: string): string[] {
     return variants;
 }
 
-function parseCliArgs(): CliOptions {
+function parseCliArgs() {
     const program = new Command();
 
     program
         .option("--only <names>", "Only build these libraries (comma-separated)")
         .option("--exclude, --skip <names>", "Exclude these libraries (comma-separated)")
         .option("--force", "Rebuild even if the repository is already built at the pinned tag", false)
-        .option("--toolchain <clang|msvc>", "Select toolchain for building", "clang")
+        .addOption(new Option("--toolchain <toolchain>", "Select toolchain for building").choices(TOOLCHAINS).default("clang"))
         .option("--prefix <path>", "Install prefix for builds (overrides the default)")
         .option(
             "--repos <path>",
@@ -110,22 +105,9 @@ function parseCliArgs(): CliOptions {
     program.parse();
 
     const opts = program.opts();
-    const toolchain = opts.toolchain as string,
+    const toolchain = opts.toolchain as Toolchain,
         onlyDebug = Boolean(opts.onlyDebug),
-        onlyRelease = Boolean(opts.onlyRelease),
-        options: CliOptions = {
-            checkLibraryUpdates: Boolean(opts.checkLibraryUpdates),
-            exclude: new Set(splitList(opts.skip)),
-            force: Boolean(opts.force),
-            genToolchains: Boolean(opts.genToolchains),
-            printPgoKeys: Boolean(opts.printPgoKeys),
-            only: opts.only ? new Set(splitList(opts.only)) : null,
-            onlyDebug,
-            onlyRelease,
-            toolchain: toolchain as CliOptions["toolchain"],
-        };
-
-    validateToolchain(toolchain);
+        onlyRelease = Boolean(opts.onlyRelease);
 
     if (onlyDebug && onlyRelease) {
         throw new Error("Options --only-debug and --only-release are mutually exclusive; use at most one.");
@@ -139,6 +121,28 @@ function parseCliArgs(): CliOptions {
         );
     }
 
+    const known = new Set(LIBRARIES.map((library) => library.name)),
+        unknown = [...splitList(opts.only as string), ...splitList(opts.skip as string)].filter(
+            (name) => !known.has(name),
+        );
+    if (unknown.length > 0) {
+        throw new Error(`Unknown library name(s) in --only/--exclude: ${unknown.join(", ")}.`);
+    }
+
+    // The paths end up unquoted in MSYS2 shell commands and compiler flag strings.
+    for (const path of [opts.prefix, opts.repos]) {
+        if (typeof path === "string" && /\s/.test(path)) {
+            throw new Error(`--prefix and --repos must not contain whitespace: "${path}".`);
+        }
+    }
+
+    settings.toolchain = toolchain;
+    settings.exclude = new Set(splitList(opts.skip));
+    settings.force = Boolean(opts.force);
+    settings.genToolchains = Boolean(opts.genToolchains);
+    settings.only = opts.only ? new Set(splitList(opts.only)) : null;
+    settings.onlyDebug = onlyDebug;
+    settings.onlyRelease = onlyRelease;
     settings.pgo = new Set(pgoTargets as PgoTarget[]);
     settings.pgoTraining = Boolean(opts.pgoTrain);
     settings.pgoIrOnly = Boolean(opts.pgoIrOnly);
@@ -168,13 +172,13 @@ function parseCliArgs(): CliOptions {
         settings.reposRoot = `C:/Repos-${toolchain}`;
     }
 
-    return options;
+    return { checkLibraryUpdates: Boolean(opts.checkLibraryUpdates), printPgoKeys: Boolean(opts.printPgoKeys) };
 }
 
 $.setPrintCommand(true);
-const options = parseCliArgs();
+const cli = parseCliArgs();
 
-if (options.checkLibraryUpdates) {
+if (cli.checkLibraryUpdates) {
     await checkLibraryUpdates(LIBRARIES);
     exit(0);
 }
@@ -187,19 +191,19 @@ async function resolveProfiles() {
     }
 }
 
-if (options.genToolchains) {
+if (settings.genToolchains) {
     consola.info(pc.cyan("Generating toolchain files..."));
     await resolveProfiles(); // the consumer files reference the library profile
-    await configureToolchain(options, CONSUMER_PROFILE);
-    consola.success(pc.green(`Toolchain files generated in ./toolchains for ${options.toolchain}.`));
+    configureToolchain(CONSUMER_PROFILE);
+    consola.success(pc.green(`Toolchain files generated in ./toolchains for ${settings.toolchain}.`));
     exit(0);
 }
 
-await setupToolchainEnv(options.toolchain);
-await installToolchainPackages(options.toolchain);
+await setupToolchainEnv(settings.toolchain);
+await installToolchainPackages(settings.toolchain);
 await resolveProfiles();
 
-if (options.printPgoKeys) {
+if (cli.printPgoKeys) {
     if (settings.pgo.has("libs")) {
         console.log(`libs=${basename(settings.libsProfdata)}`);
     }
@@ -212,14 +216,14 @@ if (options.printPgoKeys) {
     exit(0);
 }
 
-await verifyPrerequisites(options.toolchain);
-consola.info(pc.cyan(`Toolchain: ${options.toolchain}`));
+await verifyPrerequisites(settings.toolchain);
+consola.info(pc.cyan(`Toolchain: ${settings.toolchain}`));
 
 if (settings.pgo.has("libs")) {
-    await libsPgo(options);
+    await libsPgo();
 }
 
 const libsTrainingOnly = settings.pgoTraining && settings.pgo.has("libs") && !llvmPgo();
 if (!libsTrainingOnly) {
-    await buildRepos(options);
+    await buildRepos();
 }

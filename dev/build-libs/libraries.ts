@@ -1,5 +1,5 @@
 import $ from "dax";
-import { appendFile, cp, writeFile } from "node:fs/promises";
+import { appendFileSync, cpSync, readFileSync, writeFileSync } from "node:fs";
 
 import {
     applyPatch,
@@ -11,38 +11,21 @@ import {
     replaceInFile,
     stripDllImport,
 } from "./builders.ts";
+import { FFMPEG_VARIANTS, ffmpegCodecArgs } from "./ffmpeg.ts";
 import { llvmProject, llvmRuntimes } from "./llvm.ts";
 import { ruby } from "./ruby.ts";
 import {
-    DEBUG_TOOLCHAIN,
-    ICU_DATA_FILTERS,
+    buildDir,
     MAGICK_PGO_VARIANT,
     magickSuffix,
-    RELEASE_TOOLCHAIN,
     ROOT,
     settings,
+    TOOLCHAINS_DIR,
 } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
-export const FFMPEG_VARIANTS: Record<string, { codecs: string; consumers: [string, string][] }> = {
-    rap: {
-        codecs: "--enable-decoder=aac,ac3,alac,dca,eac3,flac,mp3float,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,truehd,vorbis --enable-demuxer=aac,ac3,aiff,avi,caf,dts,eac3,flac,matroska,mov,mp3,ogg,truehd,wav --enable-parser=aac,ac3,dca,flac,mlp,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
-        consumers: [["rap", "RAP_FFMPEG_ROOT"]],
-    },
-    trap: {
-        codecs: "--enable-decoder=aac,alac,flac,mp3float,opus,pcm_f32le,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8,vorbis --enable-demuxer=aac,aiff,avi,flac,matroska,mov,mp3,ogg,wav --enable-parser=aac,flac,mpegaudio,opus,vorbis --enable-filter=aformat,alimiter,aresample,firequalizer",
-        consumers: [["rap", "TRAP_FFMPEG_ROOT"]],
-    },
-    rpgmtranslate: {
-        codecs: "--enable-demuxer=asf,avi,flac,matroska,mov,mp3,mpegps,ogg,wav --enable-decoder=aac,adpcm_ima_wav,adpcm_ms,flac,h264,mjpeg,mp2float,mp3float,mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,opus,pcm_f32be,pcm_f32le,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,pcm_s8,pcm_mulaw,pcm_alaw,pcm_dvd,theora,vc1,vorbis,vp8,vp9,wmav1,wmav2,wmv1,wmv2,wmv3 --enable-parser=h264,mpeg4video,mpegvideo,vc1",
-        consumers: [["rpgmtranslate", "FFMPEG_ROOT"]],
-    },
-    vu: {
-        codecs: "--enable-libdav1d --enable-zlib --enable-decoder=libdav1d,h264,hevc,vp8,vp9,mpeg4,theora,gif,apng,webp,webp_anim --enable-demuxer=matroska,mov,avi,ogg,gif,apng,webp,webp_anim --enable-parser=av1,h264,hevc,vp8,vp9,mpeg4video,gif,png",
-        consumers: [["vu", "FFMPEG_ROOT"]],
-    },
-};
+const ICU_DATA_FILTERS = readFileSync(`${ROOT}/patches/filters.json`, "utf8");
 
 async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
     const names = ["CFLAGS", "CXXFLAGS", "LDFLAGS"] as const,
@@ -128,7 +111,7 @@ export const LIBRARIES: Library[] = [
         args: ({ isDebug }) =>
             `-DMI_OPT_ARCH=ON -DMI_OPT_SIMD=ON -DMI_SECURE=${cmakeVal(isDebug)} -DMI_SECURE_FULL=${cmakeVal(isDebug)} -DMI_OVERRIDE=ON -DMI_XMALLOC=OFF -DMI_SHOW_ERRORS=${cmakeVal(isDebug)} -DMI_GUARDED=${cmakeVal(isDebug)} -DMI_FREE_IS_CHECKED=${cmakeVal(isDebug)} -DMI_DEBUG=${cmakeVal(isDebug)} -DMI_DEBUG_INTERNAL=${cmakeVal(isDebug)} -DMI_BUILD_SHARED=${cmakeVal(isDebug)} -DMI_BUILD_STATIC=${cmakeVal(!isDebug)} -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF -DMI_INSTALL_TOPLEVEL=ON`,
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/src/alloc/alloc.c`, "!defined(MI_NO_CXX_NEW_HANDLER)", "fal");
+            replaceInFile(`${path}/src/alloc/alloc.c`, "!defined(MI_NO_CXX_NEW_HANDLER)", "fal");
         },
     },
     {
@@ -138,22 +121,22 @@ export const LIBRARIES: Library[] = [
         msys2: "libtool",
         prepare: async ({ path }) => {
             const ltdl = `${path}/libltdl/ltdl.c`;
-            await replaceInFile(
+            replaceInFile(
                 ltdl,
                 "extern LT_DLSYM_CONST lt_dlsymlist preloaded_symbols[]",
                 "extern LT_DLSYM_CONST lt_dlsymlist* preloaded_symbols = NULL",
             );
-            await replaceInFile(
+            replaceInFile(
                 ltdl,
                 "LT_SCOPE const lt_dlvtable *\tget_vtable (lt_user_data data);",
                 "LT_SCOPE const lt_dlvtable *\tget_vtable (lt_user_data data);\nLT_SCOPE const lt_dlvtable *\tloadlibrary_LTX_get_vtable (lt_user_data data);",
             );
-            await replaceInFile(
+            replaceInFile(
                 ltdl,
                 "errors += loader_init (get_vtable, 0);",
                 "errors += loader_init (get_vtable, 0);\nerrors += loader_init (loadlibrary_LTX_get_vtable, 0);",
             );
-            await replaceInFile(
+            replaceInFile(
                 ltdl,
                 "errors += lt_dlpreload_open (LT_STR(LTDLOPEN), loader_init_callback);",
                 "",
@@ -163,17 +146,12 @@ export const LIBRARIES: Library[] = [
             const p = `${path}/libltdl`,
                 config = msvc ? LIBLTDL_MSVC_CONFIG : LIBLTDL_MINGW_CONFIG;
 
-            await cp(`${p}/libltdl/lt__argz_.h`, `${p}/lt__argz.h`);
-            await writeFile(`${p}/config.h`, config);
+            cpSync(`${p}/libltdl/lt__argz_.h`, `${p}/lt__argz.h`);
+            writeFileSync(`${p}/config.h`, config);
 
             await buildPlain(p, isDebug, {
                 defines: ["HAVE_CONFIG_H", "LTDL", isDebug ? "DLL_EXPORT" : "LTDL", "LT_DEBUG_LOADERS"],
-                headers: [
-                    { dest: "ltdl.h", src: "ltdl.h" },
-                    { dest: "libltdl/lt_dlloader.h", src: "libltdl/lt_dlloader.h" },
-                    { dest: "libltdl/lt_error.h", src: "libltdl/lt_error.h" },
-                    { dest: "libltdl/lt_system.h", src: "libltdl/lt_system.h" },
-                ],
+                headers: ["ltdl.h", "libltdl/lt_dlloader.h", "libltdl/lt_error.h", "libltdl/lt_system.h"],
                 includeDirs: ["./", "./libltdl", "./loaders"],
                 libName: "libltdl.a",
                 sources: [
@@ -192,7 +170,7 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, root }) => {
             if (isDebug) {
-                await replaceInFile(`${root}/include/libltdl/lt_system.h`, "defined LIBLTDL_DLL_IMPORT", "1");
+                replaceInFile(`${root}/include/libltdl/lt_system.h`, "defined LIBLTDL_DLL_IMPORT", "1");
             }
         },
     },
@@ -202,13 +180,13 @@ export const LIBRARIES: Library[] = [
         version: "1.0.8",
         msys2: "bzip2",
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/libbz2.def`, /DESCRIPTION.+/g, "");
-            await replaceInFile(`${path}/libbz2.def`, /LIBRARY.+/g, "LIBRARY bz2");
+            replaceInFile(`${path}/libbz2.def`, /DESCRIPTION.+/g, "");
+            replaceInFile(`${path}/libbz2.def`, /LIBRARY.+/g, "LIBRARY bz2");
         },
         build: async ({ isDebug, path }) => {
             await buildPlain(path, isDebug, {
                 defFile: "libbz2.def",
-                headers: [{ dest: "bzlib.h", src: "bzlib.h" }],
+                headers: ["bzlib.h"],
                 includeDirs: ["./"],
                 libName: "libbz2.a",
                 sources: [
@@ -229,7 +207,7 @@ export const LIBRARIES: Library[] = [
         source: { git: "https://github.com/google/double-conversion", tag: "v3.4.0" },
         msys2: "double-conversion",
         prepare: async ({ path }) => {
-            await replaceInFile(
+            replaceInFile(
                 `${path}/CMakeLists.txt`,
                 "if(BUILD_SHARED_LIBS AND MSVC)",
                 'if(BUILD_SHARED_LIBS AND (MSVC OR (CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")))',
@@ -243,7 +221,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DWITH_GTEST=OFF -DWITH_FUZZERS=OFF -DWITH_BENCHMARKS=OFF -DWITH_BENCHMARK_APPS=OFF -DWITH_GZFILEOP=OFF -DZLIB_COMPAT=ON -DZLIB_ALIASES=ON -DWITH_OPTIM=ON -DWITH_ALL_FALLBACKS=OFF -DWITH_REDUCED_MEM=OFF -DWITH_NEW_STRATEGIES=ON -DWITH_CRC32_CHORBA=ON -DWITH_NATIVE_INSTRUCTIONS=OFF -DWITH_AVX512=OFF -DWITH_AVX512VNNI=OFF -DWITH_VPCLMULQDQ=OFF -DWITH_MAINTAINER_WARNINGS=OFF -DWITH_CODE_COVERAGE=OFF -DWITH_INFLATE_STRICT=OFF -DWITH_INFLATE_ALLOW_INVALID_DIST=OFF -DINSTALL_UTILS=OFF`,
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/CMakeLists.txt`, "set(NOLTOFLAG ${ZNOLTOFLAG})", "");
+            replaceInFile(`${path}/CMakeLists.txt`, "set(NOLTOFLAG ${ZNOLTOFLAG})", "");
         },
         finish: async ({ isDebug, msvc, root }) => {
             if (isDebug) {
@@ -296,7 +274,7 @@ export const LIBRARIES: Library[] = [
             `-DXZ_NLS=OFF -DXZ_SMALL=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF -DXZ_TOOL_XZ=OFF -DXZ_DOC=OFF`,
         prepare: async ({ msvc, path }) => {
             if (msvc) {
-                await replaceInFile(
+                replaceInFile(
                     `${path}/CMakeLists.txt`,
                     "if(NOT MSVC AND NOT CYGWIN)",
                     'if (NOT (MSVC OR (CMAKE_C_SIMULATE_ID STREQUAL "MSVC")) AND NOT CYGWIN)',
@@ -305,7 +283,7 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/lzma.h`);
+                stripDllImport(`${root}/include/lzma.h`);
             }
         },
     },
@@ -317,7 +295,7 @@ export const LIBRARIES: Library[] = [
             `-DLIBDEFLATE_COMPRESSION_SUPPORT=ON -DLIBDEFLATE_DECOMPRESSION_SUPPORT=ON -DLIBDEFLATE_ZLIB_SUPPORT=ON -DLIBDEFLATE_GZIP_SUPPORT=OFF -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF -DLIBDEFLATE_BUILD_STATIC_LIB=${cmakeVal(!isDebug)} -DLIBDEFLATE_BUILD_SHARED_LIB=${cmakeVal(isDebug)}`,
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/libdeflate.h`);
+                stripDllImport(`${root}/include/libdeflate.h`);
             }
         },
     },
@@ -351,8 +329,8 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, msvc, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/pcre2.h`);
-                await replaceInFile(
+                stripDllImport(`${root}/include/pcre2.h`);
+                replaceInFile(
                     `${root}/lib/cmake/pcre2/pcre2-targets.cmake`,
                     "STATIC IMPORTED",
                     "STATIC IMPORTED GLOBAL",
@@ -381,7 +359,7 @@ export const LIBRARIES: Library[] = [
             `-DBUILD_LUTS_GENERATOR=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_CODEC=OFF -DBUILD_JPIP=OFF -DBUILD_VIEWER=OFF -DBUILD_JAVA=OFF -DBUILD_STATIC_LIBS=${cmakeVal(!isDebug)}`,
         finish: async ({ isDebug, msvc, root }) => {
             if (!isDebug && msvc) {
-                await stripDllImport(`${root}/include/openjpeg-2.5/openjpeg.h`);
+                stripDllImport(`${root}/include/openjpeg-2.5/openjpeg.h`);
             }
         },
     },
@@ -399,8 +377,8 @@ export const LIBRARIES: Library[] = [
             `-DPYTHON=OFF -DPYBIND11=OFF -DBUILD_WEBSITE=OFF -DIMATH_HALF_USE_LOOKUP_TABLE=ON -DIMATH_USE_DEFAULT_VISIBILITY=OFF -DIMATH_ENABLE_LARGE_STACK=OFF -DIMATH_USE_NOEXCEPT=OFF -DIMATH_INSTALL_PKG_CONFIG=ON`,
         finish: async ({ isDebug, msvc, root }) => {
             if (!msvc && isDebug) {
-                await replaceInFile(`${root}/include/Imath/ImathVec.h`, "/// @cond Doxygen_Suppress", "/*");
-                await replaceInFile(`${root}/include/Imath/ImathVec.h`, "/// @endcond Doxygen_Suppress", "*/");
+                replaceInFile(`${root}/include/Imath/ImathVec.h`, "/// @cond Doxygen_Suppress", "/*");
+                replaceInFile(`${root}/include/Imath/ImathVec.h`, "/// @endcond Doxygen_Suppress", "*/");
             }
         },
     },
@@ -449,12 +427,12 @@ export const LIBRARIES: Library[] = [
             if (msvc) {
                 await applyPatch(path, "kvazaar-cmakelists.patch");
             } else {
-                await replaceInFile(`${path}/CMakeLists.txt`, "-Wa,-muse-unaligned-vector-move", "");
+                replaceInFile(`${path}/CMakeLists.txt`, "-Wa,-muse-unaligned-vector-move", "");
             }
         },
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/kvazaar.h`);
+                stripDllImport(`${root}/include/kvazaar.h`);
             }
         },
     },
@@ -484,10 +462,10 @@ export const LIBRARIES: Library[] = [
         msys2: "icu",
         prepare: async ({ msvc, path }) => {
             const source = `${path}/icu4c/source`;
-            await replaceInFile(`${source}/icudefs.mk.in`, "STATIC_PREFIX_WHEN_USED = s", "STATIC_PREFIX_WHEN_USED =");
-            await replaceInFile(`${source}/icudefs.mk.in`, "STATIC_PREFIX = s", "STATIC_PREFIX =");
+            replaceInFile(`${source}/icudefs.mk.in`, "STATIC_PREFIX_WHEN_USED = s", "STATIC_PREFIX_WHEN_USED =");
+            replaceInFile(`${source}/icudefs.mk.in`, "STATIC_PREFIX = s", "STATIC_PREFIX =");
 
-            await replaceInFile(
+            replaceInFile(
                 `${source}/data/pkgdataMakefile.in`,
                 "OUTPUTFILE=icupkg.inc",
                 "OUTPUTFILE=icupkg.inc\nCFLAGS += -fno-lto\nCXXFLAGS += -fno-lto\nLDFLAGSICUDT += -fno-lto",
@@ -495,22 +473,22 @@ export const LIBRARIES: Library[] = [
 
             // Builds may go to another device, avoid symlinks
             for (const dir of [".", "common", "i18n", "io", "stubdata", "tools/toolutil"]) {
-                await replaceInFile(`${source}/${dir}/Makefile.in`, "ln -s", "cp -rf");
+                replaceInFile(`${source}/${dir}/Makefile.in`, "ln -s", "cp -rf");
             }
-            await replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, '#define LN_CMD "ln -s"', '#define LN_CMD "cp -f"');
+            replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, '#define LN_CMD "ln -s"', '#define LN_CMD "cp -f"');
 
             if (msvc) {
                 await applyPatch(path, "plurrule.patch");
                 await $`cp ${`${ROOT}/patches/mh-cygwin-clang-msvc.txt`} icu4c/source/config/mh-cygwin-msvc`.cwd(path);
-                await replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, "LIB.exe /nologo /out:", "llvm-ar qc ");
-                await replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, "link.exe", "lld-link");
-                await replaceInFile(`${source}/data/makedata.mak`, "rc.exe", "llvm-rc");
-                await replaceInFile(`${source}/data/Makefile.in`, "rc.exe", "llvm-rc");
+                replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, "LIB.exe /nologo /out:", "llvm-ar qc ");
+                replaceInFile(`${source}/tools/pkgdata/pkgdata.cpp`, "link.exe", "lld-link");
+                replaceInFile(`${source}/data/makedata.mak`, "rc.exe", "llvm-rc");
+                replaceInFile(`${source}/data/Makefile.in`, "rc.exe", "llvm-rc");
             }
         },
         build: async ({ isDebug, msvc, path, root }) => {
             const sourceDir = `${path}/icu4c/source`;
-            await writeFile(`${sourceDir}/filters.json`, ICU_DATA_FILTERS);
+            writeFileSync(`${sourceDir}/filters.json`, ICU_DATA_FILTERS);
             const common = `--enable-option-checking --disable-tests --disable-samples --enable-tools --disable-icu-config --disable-extras --disable-icuio --disable-layout --disable-layoutex --disable-dyload --disable-fuzzer --disable-tracing --disable-plugins --disable-draft --with-library-suffix=""`;
 
             const icuPlatform = msvc ? "Cygwin" : "MinGW";
@@ -526,8 +504,8 @@ export const LIBRARIES: Library[] = [
         finish: async ({ isDebug, msvc, path, root }) => {
             if (msvc) {
                 if (isDebug) {
-                    await movePdbs(`${path}/icu4c/source/bin`, `${root}/bin`);
-                    await movePdbs(`${path}/icu4c/source/lib`, `${root}/bin`);
+                    movePdbs(`${path}/icu4c/source/bin`, `${root}/bin`);
+                    movePdbs(`${path}/icu4c/source/lib`, `${root}/bin`);
                 } else {
                     await $`mv ${`${root}/bin/icudt.lib`} ${`${root}/lib/icudt.lib`}`;
                 }
@@ -540,7 +518,7 @@ export const LIBRARIES: Library[] = [
             }
 
             if (!isDebug) {
-                await stripDllImport(`${root}/include/unicode/platform.h`);
+                stripDllImport(`${root}/include/unicode/platform.h`);
             }
         },
     },
@@ -552,7 +530,7 @@ export const LIBRARIES: Library[] = [
             `-DUSE_IWYU=OFF -DENABLE_SDL=OFF -DENABLE_SIMD=ON -DENABLE_AVX2=ON -DENABLE_AVX512=OFF -DENABLE_DECODER=OFF -DENABLE_ENCODER=OFF -DENABLE_SHERLOCK265=OFF -DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF -DWITH_FUZZERS=OFF -DFORCE_FULL_VISIBILITY=OFF`,
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/libde265/de265.h`);
+                stripDllImport(`${root}/include/libde265/de265.h`);
             }
         },
     },
@@ -572,7 +550,7 @@ export const LIBRARIES: Library[] = [
         msys2: "libspng",
         args: ({ isDebug }) => `-DENABLE_OPT=ON -DSPNG_SHARED=${cmakeVal(isDebug)} -DSPNG_STATIC=${cmakeVal(!isDebug)}`,
         finish: async ({ root }) => {
-            await replaceInFile(
+            replaceInFile(
                 `${root}/lib/cmake/spng/SPNGConfig.cmake`,
                 "find_dependency(ZLIB REQUIRED)",
                 "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB REQUIRED)",
@@ -630,12 +608,12 @@ export const LIBRARIES: Library[] = [
         prepare: async ({ msvc, path }) => {
             await applyPatch(path, "libpng-install.patch");
             if (msvc) {
-                await replaceInFile(
+                replaceInFile(
                     `${path}/CMakeLists.txt`,
                     "if(NOT CMAKE_HOST_WIN32 OR CYGWIN OR MINGW)",
                     "if(CMAKE_HOST_WIN32 OR CYGWIN OR MINGW)",
                 );
-                await replaceInFile(
+                replaceInFile(
                     `${path}/CMakeLists.txt`,
                     "if(NOT WIN32 OR CYGWIN OR MINGW)",
                     "if(WIN32 OR CYGWIN OR MINGW)",
@@ -643,7 +621,7 @@ export const LIBRARIES: Library[] = [
             }
 
             // Causes fail in CI for some reason
-            await replaceInFile(`${path}/pngpriv.h`, "#  error The include path of <zlib.h> is incorrect", "");
+            replaceInFile(`${path}/pngpriv.h`, "#  error The include path of <zlib.h> is incorrect", "");
         },
         finish: async ({ isDebug, msvc, root }) => {
             if (isDebug && msvc) {
@@ -661,7 +639,7 @@ export const LIBRARIES: Library[] = [
         msys2: "nuspell",
         prepare: async ({ path }) => {
             await applyPatch(path, "nuspell-install.patch");
-            await appendFile(
+            appendFileSync(
                 `${path}/src/nuspell/CMakeLists.txt`,
                 "\nif(NOT BUILD_SHARED_LIBS)\ntarget_compile_definitions(nuspell PUBLIC U_STATIC_IMPLEMENTATION)\nendif()\n",
             );
@@ -683,16 +661,16 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, msvc, path, root }) => {
             if (isDebug && msvc) {
-                await movePdbs(`${path}/lib/.libs`, `${root}/bin`);
+                movePdbs(`${path}/lib/.libs`, `${root}/bin`);
                 await copyLib(root, "raw.dll.lib", "raw.lib");
                 await copyLib(root, "raw_r.dll.lib", "raw_r.lib");
             }
 
-            await replaceInFile(`${root}/lib/pkgconfig/libraw.pc`, "-lstdc++", "");
-            await replaceInFile(`${root}/lib/pkgconfig/libraw_r.pc`, "-lstdc++", "");
+            replaceInFile(`${root}/lib/pkgconfig/libraw.pc`, "-lstdc++", "");
+            replaceInFile(`${root}/lib/pkgconfig/libraw_r.pc`, "-lstdc++", "");
 
             if (!isDebug) {
-                await stripDllImport(`${root}/include/libraw/libraw_types.h`);
+                stripDllImport(`${root}/include/libraw/libraw_types.h`);
             }
         },
     },
@@ -736,9 +714,9 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DOPENEXR_INSTALL_DOCS=OFF -DBUILD_WEBSITE=OFF -DOPENEXR_ENABLE_THREADING=ON -DOPENEXR_USE_TBB=OFF -DOPENEXR_USE_DEFAULT_VISIBILITY=OFF -DOPENEXR_ENABLE_LARGE_STACK=OFF -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_INSTALL_DEVELOPER_TOOLS=OFF -DOPENEXR_BUILD_EXAMPLES=OFF -DOPENEXR_BUILD_PYTHON=OFF -DOPENEXR_BUILD_OSS_FUZZ=OFF -DOPENEXR_TEST_LIBRARIES=OFF -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF -DOPENEXR_USE_CLANG_TIDY=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_OPENJPH=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_INSTALL_PKG_CONFIG=ON`,
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/CMakeLists.txt`, "add_subdirectory(website/src)", "");
+            replaceInFile(`${path}/CMakeLists.txt`, "add_subdirectory(website/src)", "");
             // shortcut: OpenEXR 3.5.4 vendors OpenJPH 0.33 but still requires 0.32 for discovery, so a PATH-found msys64 0.32 wins; drop once upstream bumps the minimum
-            await replaceInFile(
+            replaceInFile(
                 `${path}/cmake/OpenEXRSetup.cmake`,
                 "set(OPENEXR_MINIMUM_OPENJPH_VERSION 0.32.0)",
                 "set(OPENEXR_MINIMUM_OPENJPH_VERSION 0.33.0)",
@@ -760,7 +738,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DBUILD_CLI=OFF -DBUILD_FUZZERS=OFF -DUSE_THREADS=ON -DUSE_NSEC=ON -DUSE_SSH=OFF -DUSE_HTTPS=ON -DREGEX_BACKEND=pcre2 -DDEPRECATE_HARD=ON`,
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/CMakeLists.txt`, "include(DefaultCFlags)", "");
+            replaceInFile(`${path}/CMakeLists.txt`, "include(DefaultCFlags)", "");
         },
     },
 
@@ -773,7 +751,7 @@ export const LIBRARIES: Library[] = [
             `-DFLTK_BUILD_SHARED_LIBS=OFF -DFLTK_USE_SYSTEM_ZLIB=ON -DFLTK_USE_SYSTEM_LIBPNG=ON -DFLTK_USE_SYSTEM_LIBJPEG=ON -DFLTK_OPTION_SVG=OFF -DFLTK_BUILD_FLUID=OFF -DFLTK_BUILD_FLTK_OPTIONS=OFF -DFLTK_BUILD_GL=ON -DFLTK_BUILD_FORMS=OFF -DFLTK_BUILD_TEST=OFF -DFLTK_BUILD_HTML_DOCS=OFF -DFLTK_OPTION_PEN_SUPPORT=OFF -DFLTK_OPTION_LARGE_FILE=OFF -DFLTK_OPTION_PRINT_SUPPORT=OFF -DFLTK_OPTION_FILESYSTEM_SUPPORT=ON -DFLTK_OPTION_STD=ON -DFLTK_GRAPHICS_GDIPLUS=ON -DFLTK_MSVC_RUNTIME_DLL=${cmakeVal(isDebug)}`,
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/FL/Fl_Export.H`);
+                stripDllImport(`${root}/include/FL/Fl_Export.H`);
             }
         },
         prepare: async ({ path }) => {
@@ -800,12 +778,12 @@ export const LIBRARIES: Library[] = [
         args: ({ isDebug }) =>
             `-DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_ENABLE_TESTS=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=ON -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF -DJPEGXL_ENABLE_TCMALLOC=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_COVERAGE=OFF -DJPEGXL_ENABLE_TRANSCODE_JPEG=ON -DJPEGXL_ENABLE_BOXES=ON -DJPEGXL_WARNINGS_AS_ERRORS=OFF -DJPEGXL_TEST_TOOLS=OFF -DJPEGXL_ENABLE_WASM_THREADS=OFF -DJPEGXL_FORCE_SYSTEM_BROTLI=ON -DJPEGXL_FORCE_SYSTEM_GTEST=ON -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DJPEGXL_FORCE_SYSTEM_HWY=ON -DJPEGXL_STATIC=${cmakeVal(!isDebug)}`,
         prepare: async ({ path }) => {
-            await replaceInFile(`${path}/CMakeLists.txt`, "add_subdirectory(tools)", "");
-            await replaceInFile(`${path}/lib/jxl_extras.cmake`, "find_package(GIF 5.1)", "");
+            replaceInFile(`${path}/CMakeLists.txt`, "add_subdirectory(tools)", "");
+            replaceInFile(`${path}/lib/jxl_extras.cmake`, "find_package(GIF 5.1)", "");
         },
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/jxl/jxl_export.h`);
+                stripDllImport(`${root}/include/jxl/jxl_export.h`);
             }
         },
     },
@@ -817,8 +795,8 @@ export const LIBRARIES: Library[] = [
             `-DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_OPENSSL=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=ON -DENABLE_ZSTD=OFF -DENABLE_ZLIB=OFF -DENABLE_BZip2=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_WIN32_XMLLITE=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF -DENABLE_CNG=ON -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_XATTR=OFF -DENABLE_ACL=OFF -DENABLE_ICONV=OFF -DENABLE_TEST=OFF -DENABLE_COVERAGE=OFF -DENABLE_WERROR=OFF -DPOSIX_REGEX_LIB=NONE`,
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/archive.h`);
-                await stripDllImport(`${root}/include/archive_entry.h`);
+                stripDllImport(`${root}/include/archive.h`);
+                stripDllImport(`${root}/include/archive_entry.h`);
             }
         },
         prepare: async ({ path }) => {
@@ -836,7 +814,7 @@ export const LIBRARIES: Library[] = [
             `-DWITH_EXAMPLES=OFF -DWITH_EXAMPLE_HEIF_THUMB=OFF -DWITH_EXAMPLE_HEIF_VIEW=OFF -DWITH_GDK_PIXBUF=OFF -DENABLE_PLUGIN_LOADING=OFF -DWITH_LIBDE265=ON -DWITH_X265=OFF -DWITH_KVAZAAR=ON -DWITH_UVG266=OFF -DWITH_VVDEC=OFF -DWITH_VVENC=OFF -DWITH_X264=OFF -DWITH_OpenH264_DECODER=ON -DWITH_DAV1D=ON -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF -DWITH_SvtEnc=OFF -DWITH_RAV1E=ON -DWITH_JPEG_DECODER=ON -DWITH_JPEG_ENCODER=OFF -DWITH_OpenJPEG_ENCODER=OFF -DWITH_OpenJPEG_DECODER=ON -DWITH_FFMPEG_DECODER=OFF -DWITH_OPENJPH_ENCODER=OFF -DWITH_UNCOMPRESSED_CODEC=OFF -DWITH_WEBCODECS=OFF -DWITH_LIBSHARPYUV=ON -DBUILD_DOCUMENTATION=OFF`,
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
-                await stripDllImport(`${root}/include/libheif/heif_export.h`);
+                stripDllImport(`${root}/include/libheif/heif_export.h`);
             }
         },
     },
@@ -901,14 +879,14 @@ export const LIBRARIES: Library[] = [
             `-DUHDR_BUILD_EXAMPLES=OFF -DUHDR_ENABLE_INTRINSICS=ON -DUHDR_ENABLE_GLES=OFF -DUHDR_ENABLE_HEIF=OFF`,
         prepare: async ({ path }) => {
             const lists = `${path}/CMakeLists.txt`;
-            await replaceInFile(lists, "if(MSVC AND NOT BUILD_SHARED_LIBS)", "if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)");
-            await replaceInFile(lists, "if(BUILD_SHARED_LIBS AND NOT MSVC)", "if(BUILD_SHARED_LIBS AND NOT (MSVC OR WIN32))");
-            await replaceInFile(
+            replaceInFile(lists, "if(MSVC AND NOT BUILD_SHARED_LIBS)", "if((MSVC OR WIN32) AND NOT BUILD_SHARED_LIBS)");
+            replaceInFile(lists, "if(BUILD_SHARED_LIBS AND NOT MSVC)", "if(BUILD_SHARED_LIBS AND NOT (MSVC OR WIN32))");
+            replaceInFile(
                 lists,
                 "combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT MSVC)",
                 "combine_static_libs(${UHDR_CORE_LIB_NAME} ${UHDR_TARGET_NAME_STATIC})\n  if(NOT (MSVC OR WIN32))",
             );
-            await replaceInFile(lists, "$<$<CONFIG:Debug>:Debug>", "");
+            replaceInFile(lists, "$<$<CONFIG:Debug>:Debug>", "");
         },
     },
 
@@ -919,21 +897,21 @@ export const LIBRARIES: Library[] = [
         variants: () => [...settings.ffmpegVariants].sort().join(","),
         prepare: async ({ msvc, path }) => {
             // Upstream 9.0 treats any lld-link "ignoring unknown argument" warning as a hard failure
-            await replaceInFile(
+            replaceInFile(
                 `${path}/configure`,
                 `test $ret -eq 0 && ! echo "$output" | grep -qE 'LNK4044|lld-link: warning: ignoring unknown argument'`,
                 "test $ret -eq 0",
             );
 
             // With -flto=full the C reference becomes an undefined external in the bitcode
-            await appendFile(`${path}/libavcodec/x86/Makefile`, "\n$(SUBDIR)x86/mlpdsp_init.o: CFLAGS += -fno-lto\n");
+            appendFileSync(`${path}/libavcodec/x86/Makefile`, "\n$(SUBDIR)x86/mlpdsp_init.o: CFLAGS += -fno-lto\n");
 
             if (msvc) {
-                await replaceInFile(`${path}/compat/windows/makedef`, "$AR rcs", "llvm-ar rcs");
+                replaceInFile(`${path}/compat/windows/makedef`, "$AR rcs", "llvm-ar rcs");
                 await $`sd ${"SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'"} ${`SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.pdb)'`} configure`.cwd(
                     path,
                 );
-                await replaceInFile(
+                replaceInFile(
                     `${path}/configure`,
                     "SLIB_INSTALL_EXTRA_LIB='$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.def)'",
                     "SLIB_INSTALL_EXTRA_LIB='$(SLIBNAME:$(SLIBSUF)=.lib)'",
@@ -950,14 +928,14 @@ export const LIBRARIES: Library[] = [
                     ? "--disable-optimizations --enable-debug --disable-stripping"
                     : "--enable-optimizations --disable-debug --enable-stripping";
 
-            for (const [variant, { codecs }] of Object.entries(FFMPEG_VARIANTS)) {
+            for (const [variant, config] of Object.entries(FFMPEG_VARIANTS)) {
                 if (!settings.ffmpegVariants.includes(variant)) {
                     continue;
                 }
                 await step(`ffmpeg-${variant}`, async () => {
                     await bash`cd ${toMsysPath(path)} && make clean`.noThrow();
                     await buildAutoconf(path, isDebug, `${root}/ffmpeg-${variant}`, {
-                        args: `${common} ${buildType} ${codecs}`,
+                        args: `${common} ${buildType} ${ffmpegCodecArgs(config)}`,
                         libs: false,
                         libtool: false,
                     });
@@ -975,9 +953,9 @@ export const LIBRARIES: Library[] = [
             await applyPatch(path, "imagemagick-fourier-pocketfft.patch");
 
             if (msvc) {
-                await replaceInFile(`${path}/configure`, "GOMP_LIBS=''", "GOMP_LIBS=' '");
+                replaceInFile(`${path}/configure`, "GOMP_LIBS=''", "GOMP_LIBS=' '");
 
-                await replaceInFile(
+                replaceInFile(
                     `${path}/configure`,
                     "echo /'*' $ac_prefix_conf_OUT. Generated automatically at end of configure. '*'/ >>$tmp/pconfig.h",
                     "echo /'*' $ac_prefix_conf_OUT. Generated automatically at end of configure. '*'/ >>$tmp/pconfig.h\n    echo 'typedef __int64 ssize_t;' >>$tmp/pconfig.h",
@@ -1009,9 +987,9 @@ export const LIBRARIES: Library[] = [
         finish: async ({ isDebug, msvc, path, root }) => {
             await $`rm -f ${root}/bin/MagickCore-config ${root}/bin/MagickWand-config ${root}/bin/Magick++-config`;
             if (isDebug && msvc) {
-                await movePdbs(`${path}/MagickCore/.libs`, `${root}/bin`);
-                await movePdbs(`${path}/MagickWand/.libs`, `${root}/bin`);
-                await movePdbs(`${path}/Magick++/lib/.libs`, `${root}/bin`);
+                movePdbs(`${path}/MagickCore/.libs`, `${root}/bin`);
+                movePdbs(`${path}/MagickWand/.libs`, `${root}/bin`);
+                movePdbs(`${path}/Magick++/lib/.libs`, `${root}/bin`);
 
                 for (const suffix of settings.magickVariants.map(magickSuffix)) {
                     for (const lib of ["Magick++", "MagickCore", "MagickWand"]) {
@@ -1040,27 +1018,21 @@ export const LIBRARIES: Library[] = [
             await $`git submodule update --init --recursive --depth 1`.cwd(`${path}/qttools`);
             await applyPatch(`${path}/qtbase`, "qtbase-drop-unused-tools.patch");
 
-            if (isDebug) {
-                if (msvc) {
-                    await replaceInFile(
-                        `${path}/qtbase/src/corelib/CMakeLists.txt`,
-                        "add_dependencies(Core qmodule_pri)",
-                        `add_dependencies(Core qmodule_pri)\ntarget_link_options(Core PRIVATE "-Wl,-FORCE:UNRESOLVED")`,
-                    );
-                }
-
-                await $`./configure.bat ${raw(common)} -debug -sanitize address -no-static -no-static-runtime ${raw(featureToggles)} -- -B=debug -DCMAKE_TOOLCHAIN_FILE=${DEBUG_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
-                    path,
+            if (isDebug && msvc) {
+                replaceInFile(
+                    `${path}/qtbase/src/corelib/CMakeLists.txt`,
+                    "add_dependencies(Core qmodule_pri)",
+                    `add_dependencies(Core qmodule_pri)\ntarget_link_options(Core PRIVATE "-Wl,-FORCE:UNRESOLVED")`,
                 );
-                await $`cmake --build debug -j`.cwd(path);
-                await $`cmake --install debug`.cwd(path);
-            } else {
-                await $`./configure.bat ${raw(common)} -release -static -static-runtime ${raw(featureToggles)} -- -B=release -DCMAKE_TOOLCHAIN_FILE=${RELEASE_TOOLCHAIN} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
-                    path,
-                );
-                await $`cmake --build release -j`.cwd(path);
-                await $`cmake --install release`.cwd(path);
             }
+
+            const dir = buildDir(isDebug),
+                linkage = isDebug ? "-sanitize address -no-static -no-static-runtime" : "-static -static-runtime";
+            await $`./configure.bat ${raw(common)} -${dir} ${raw(linkage)} ${raw(featureToggles)} -- -B=${dir} -DCMAKE_TOOLCHAIN_FILE=${`${TOOLCHAINS_DIR}/${dir}.cmake`} -DQT_USE_DEFAULT_CMAKE_OPTIMIZATION_FLAGS=ON`.cwd(
+                path,
+            );
+            await $`cmake --build ${dir} -j`.cwd(path);
+            await $`cmake --install ${dir}`.cwd(path);
         },
     },
     {
@@ -1086,10 +1058,10 @@ export function getPin(library: Library): string {
     return "git" in library.source ? library.source.tag : library.source.archive;
 }
 
-export function shouldBuildLibrary(name: string, options: { exclude: Set<string>; only: null | Set<string> }): boolean {
+export function shouldBuildLibrary(name: string): boolean {
     const key = name.toLowerCase();
-    if (options.only && !options.only.has(key)) {
+    if (settings.only && !settings.only.has(key)) {
         return false;
     }
-    return !options.exclude.has(key);
+    return !settings.exclude.has(key);
 }

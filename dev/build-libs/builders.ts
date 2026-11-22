@@ -1,30 +1,21 @@
 import consola from "consola";
 import $ from "dax";
-import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
-import { msvcToolsRoot } from "./msvc.ts";
-import {
-    buildDir,
-    buildRoot,
-    DEBUG_NATIVE,
-    DEBUG_TOOLCHAIN,
-    RELEASE_NATIVE,
-    RELEASE_TOOLCHAIN,
-    ROOT,
-} from "./settings.ts";
+import { buildDir, buildRoot, ROOT, TOOLCHAINS_DIR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import { computeFlags, rustPlatform, toolchainState } from "./toolchain.ts";
-import type { Ctx, Library, PlainArgs } from "./types.ts";
+import type { Ctx, Library } from "./types.ts";
 
 export function cmakeVal(on: boolean): string {
     return on ? "ON" : "OFF";
 }
 
-export async function movePdbs(from: string, to: string) {
-    for (const file of (await readdir(from)).filter((f) => f.endsWith(".pdb"))) {
-        await cp(`${from}/${file}`, `${to}/${file}`);
-        await rm(`${from}/${file}`);
+export function movePdbs(from: string, to: string) {
+    for (const file of readdirSync(from).filter((f) => f.endsWith(".pdb"))) {
+        cpSync(`${from}/${file}`, `${to}/${file}`);
+        rmSync(`${from}/${file}`);
     }
 }
 
@@ -32,15 +23,13 @@ export async function copyLib(root: string, from: string, to: string): Promise<v
     await $`cp ${`${root}/lib/${from}`} ${`${root}/lib/${to}`}`;
 }
 
-// Replaces every occurrence (a string literally, a RegExp with its own flags) and throws when nothing matched, so an
-// upstream change can't silently turn a fix into a no-op. `optional` is for edits that only apply to some trees.
-export async function replaceInFile(
+export function replaceInFile(
     file: string,
     from: RegExp | string,
     to: string,
     { optional = false } = {},
-): Promise<void> {
-    const text = await readFile(file, "utf8");
+): void {
+    const text = readFileSync(file, "utf8");
     let search = from,
         replacement = to;
     if (typeof from === "string" && text.includes("\r\n")) {
@@ -55,16 +44,15 @@ export async function replaceInFile(
         }
         return;
     }
-    await writeFile(file, result);
+    writeFileSync(file, result);
 }
 
-export async function stripDllImport(file: string): Promise<void> {
-    await replaceInFile(file, "__declspec(dllimport)", "", { optional: true });
+export function stripDllImport(file: string): void {
+    replaceInFile(file, "__declspec(dllimport)", "", { optional: true });
 }
 
 export async function applyPatch(path: string, patch: string): Promise<void> {
     const file = `${ROOT}/patches/${patch}`;
-    // A patch that reverse-applies is already in the tree (a re-run in a submodule git reset doesn't touch).
     if ((await $`git apply --check -R ${file}`.cwd(path).quiet().noThrow()).code === 0) {
         return;
     }
@@ -79,41 +67,36 @@ export async function applyPatch(path: string, patch: string): Promise<void> {
     }
 }
 
-async function msvcHostBin(): Promise<string> {
-    return `${await msvcToolsRoot()}/bin/Hostx64/x64`;
+export async function configureCMake(
+    isDebug: boolean,
+    cwd: string,
+    args: string,
+    env: Record<string, string | undefined> = { ...process.env },
+) {
+    const dir = buildDir(isDebug);
+    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${`${TOOLCHAINS_DIR}/${dir}.cmake`} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(args)}`
+        .cwd(cwd)
+        .env(env);
 }
 
 export async function buildCMake(library: Library, ctx: Ctx) {
     const { isDebug, path } = ctx,
         cwd = library.sourceSubdir ? `${path}/${library.sourceSubdir}` : path,
-        dir = buildDir(isDebug),
-        toolchainFile = isDebug ? DEBUG_TOOLCHAIN : RELEASE_TOOLCHAIN;
-    const env = { ...process.env, ...library.env },
-        msvcBin = library.msvcTools ? await msvcHostBin() : null;
-    if (msvcBin) {
-        env.PATH = `${msvcBin};${process.env.PATH ?? ""}`;
-    }
-    const masm = msvcBin ? ` -DCMAKE_ASM_MASM_COMPILER="${msvcBin}/ml64.exe"` : "";
-    await $`cmake -B ${dir} -S . -G Ninja --toolchain ${toolchainFile} --fresh -DBUILD_TOOLS=OFF -DBUILD_DOCS=OFF -DBUILD_DOC=OFF -DBUILD_EXAMPLE=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=${cmakeVal(isDebug)} ${raw(library.args?.(ctx) ?? "")}${raw(masm)}`
-        .cwd(cwd)
-        .env(env);
-    if (library.cmakeTarget) {
-        await $`cmake --build ${dir} -j --target ${library.cmakeTarget}`.cwd(cwd).env(env);
-        return;
-    }
+        dir = buildDir(isDebug);
+    await configureCMake(isDebug, cwd, library.args?.(ctx) ?? "");
     await $`cmake --build ${dir} -j`.cwd(cwd);
     await $`cmake --install ${dir}`.cwd(cwd);
 }
 
 export async function buildMeson(library: Library, ctx: Ctx) {
     const { isDebug, path } = ctx,
-        dir = buildDir(isDebug),
-        native = isDebug ? DEBUG_NATIVE : RELEASE_NATIVE,
-        meson = library.mesonCommand ?? ["meson"];
+        dir = buildDir(isDebug);
 
-    await $`${meson} setup ${dir} --native-file=${native} ${raw(library.args?.(ctx) ?? "")}`.cwd(path);
-    await $`${meson} compile -C ${dir}`.cwd(path);
-    await $`${meson} install -C ${dir}`.cwd(path);
+    await $`meson setup ${dir} --native-file=${`${TOOLCHAINS_DIR}/native-${dir}.ini`} ${raw(library.args?.(ctx) ?? "")}`.cwd(
+        path,
+    );
+    await $`meson compile -C ${dir}`.cwd(path);
+    await $`meson install -C ${dir}`.cwd(path);
 }
 
 let cargoC: Promise<unknown> | undefined;
@@ -127,7 +110,9 @@ function ensureCargoC() {
     cargoC ??= $`cargo cinstall --help`
         .quiet()
         .noThrow()
-        .then(({ code }) => code === 0 || $`cargo binstall --no-confirm --targets ${target} cargo-c`);
+        .then(
+            ({ code }) => code === 0 || $`cargo binstall --no-confirm --targets ${target} cargo-c`,
+        )! as Promise<unknown>;
     return cargoC;
 }
 
@@ -140,6 +125,15 @@ export async function buildRust(library: Library, ctx: Ctx) {
     await $`cargo cinstall ${raw(isDebug ? "--library-type=cdylib" : "--library-type=staticlib")} ${raw(`--profile ${profile}${target}`)} --no-default-features ${raw(library.args?.(ctx) ?? "")} --prefix=${buildRoot(isDebug)}`.cwd(
         path,
     );
+}
+
+interface PlainArgs {
+    defines?: string[];
+    headers: string[]; // relative to the source tree, installed at the same path under include/
+    includeDirs: string[];
+    libName: string;
+    sources: string[];
+    defFile?: string;
 }
 
 interface AutoconfOptions {
@@ -183,25 +177,25 @@ export async function buildAutoconf(
         : "";
 
     if (libtool && toolchain === "msvc") {
-        await replaceInFile(configurePath, "-Fe$tool_output_objdir$soname", "-o $tool_output_objdir$soname");
-        await replaceInFile(configurePath, "-Fe$output_objdir/$soname", "-o $output_objdir/$soname");
-        await replaceInFile(configurePath, "-link -EXPORT", "-Xlinker -EXPORT");
+        replaceInFile(configurePath, "-Fe$tool_output_objdir$soname", "-o $tool_output_objdir$soname");
+        replaceInFile(configurePath, "-Fe$output_objdir/$soname", "-o $output_objdir/$soname");
+        replaceInFile(configurePath, "-link -EXPORT", "-Xlinker -EXPORT");
     }
 
     const libsArg = passLibs ? `LIBS="${libs}"` : "";
 
-    await bash`cd ${msysPath} && make distclean`.noThrow(); // fails harmlessly on a fresh tree
+    await bash`cd ${msysPath} && make distclean`.noThrow();
 
     await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}" CXX="sccache ${tools.cxx}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${toMsysPath(prefix)} ${libtoolFlags}`;
 
     if (libtool) {
         const libtoolPath = `${path}/libtool`;
-        await replaceInFile(libtoolPath, "-fuse-ld=*|", "-f*|--target=*|-march=*|-mtune=*|-D*|-g*|-w*|", {
+        replaceInFile(libtoolPath, "-fuse-ld=*|", "-f*|--target=*|-march=*|-mtune=*|-D*|-g*|-w*|", {
             optional: true,
         });
 
         if (toolchain === "msvc") {
-            await replaceInFile(libtoolPath, 'wl=""', 'wl="-Wl,"');
+            replaceInFile(libtoolPath, 'wl=""', 'wl="-Wl,"');
         }
     }
 
@@ -257,10 +251,10 @@ export async function buildPlain(
         await $`cp ${libName} ${`${prefix}/lib/${outputLibName}`}`.cwd(path);
     }
 
-    for (const h of headers) {
-        const dest = `${prefix}/include/${h.dest}`,
+    for (const header of headers) {
+        const dest = `${prefix}/include/${header}`,
             destDir = dest.slice(0, dest.lastIndexOf("/"));
         await $`mkdir -p ${destDir}`;
-        await $`cp ${h.src} ${dest}`.cwd(path);
+        await $`cp ${header} ${dest}`.cwd(path);
     }
 }

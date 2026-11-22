@@ -1,27 +1,18 @@
-import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { delimiter } from "node:path";
 
-import { FFMPEG_VARIANTS } from "./libraries.ts";
-import {
-    buildRoot,
-    CLANG64,
-    DEBUG_FFMPEG_ROOT,
-    DEBUG_NATIVE,
-    DEBUG_TOOLCHAIN,
-    INJECT_TARGETS,
-    LLVM_ROOT,
-    RELEASE_FFMPEG_ROOT,
-    RELEASE_NATIVE,
-    RELEASE_TOOLCHAIN,
-    SEP,
-    settings,
-    TOOLCHAINS_DIR,
-} from "./settings.ts";
+import { FFMPEG_VARIANTS } from "./ffmpeg.ts";
+import { buildDir, buildRoot, CLANG64, settings, TOOLCHAINS_DIR } from "./settings.ts";
 import { bash } from "./shell.ts";
-import type { BuildConfig, CliOptions, Conf, Library, Shared, Toolchain, ToolchainProfile, Tools } from "./types.ts";
+import type { BuildConfig, Conf, Library, Shared, Toolchain, ToolchainProfile, Tools } from "./types.ts";
+
+const INJECT_TARGETS = `${TOOLCHAINS_DIR}/inject-targets.cmake`,
+    LLVM_ROOT = "C:/LLVM",
+    SEP = delimiter;
+
+export const CLANG_WIN_TARGET = "x86_64-w64-windows-gnu";
 
 const C_STD = "17",
-    CLANG_WIN_TARGET = "x86_64-w64-windows-gnu",
     CXX_STD = "23",
     MSVC_TARGET = "x86_64-pc-windows-msvc";
 
@@ -31,25 +22,24 @@ export function rustPlatform(toolchain: Toolchain): string {
     return toolchain === "msvc" ? "win-msvc" : "win-clang";
 }
 
-export function isToolchain(value: string): value is Toolchain {
-    return (TOOLCHAINS as readonly string[]).includes(value);
-}
-
 let current: Conf | null = null;
 
 export const DEFAULT_PROFILE: ToolchainProfile = { asan: false, debugOpt: true, rtti: false };
 
-export const CONSUMER_PROFILE: ToolchainProfile = { asan: false, debugOpt: false, linkLibsProfile: true, rtti: true };
+export const CONSUMER_PROFILE: ToolchainProfile = {
+    asan: false,
+    consumer: true,
+    debugOpt: false,
+    linkLibsProfile: true,
+    rtti: true,
+};
 
 export function profileOf(library: Library): ToolchainProfile {
     return { ...DEFAULT_PROFILE, ...library.profile };
 }
 
-export async function configureToolchain(
-    options: CliOptions,
-    profile: ToolchainProfile = DEFAULT_PROFILE,
-): Promise<Conf> {
-    current = await genToolchains(options, profile);
+export function configureToolchain(profile: ToolchainProfile = DEFAULT_PROFILE): Conf {
+    current = genToolchains(profile);
     return current;
 }
 
@@ -89,17 +79,6 @@ export async function computeFlags(isDebug: boolean) {
     return { cFlags, cxxFlags, includeFlags, ldFlags, root };
 }
 
-function dedupPath(path: string, sep: string): string {
-    const seen = new Set<string>();
-    return (
-        path
-            .split(sep)
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            .filter((p) => p !== "" && !seen.has(p) && seen.add(p))
-            .join(sep)
-    );
-}
-
 function dualRoot(sub: string, isDebug: boolean) {
     const debug = `${buildRoot(true)}/${sub}`,
         release = `${buildRoot(false)}/${sub}`;
@@ -111,55 +90,55 @@ function replaceEntry(existing: string | undefined, active: string, inactive: st
     return [...rest, active].join(SEP);
 }
 
-function dropInactiveRoot(existing: string | undefined, inactiveRoot: string): string {
-    return (existing ?? "")
-        .split(SEP)
-        .filter((entry) => !entry.startsWith(`${inactiveRoot}/`))
-        .join(SEP);
+function prepend(entries: string[], existing: string | undefined): string {
+    return [...entries, ...(existing ?? "").split(SEP)].filter(Boolean).join(SEP);
 }
+
+const BASE_ENV_LISTS = [
+    "PATH",
+    "INCLUDE",
+    "LIB",
+    "PKG_CONFIG_PATH",
+    "C_INCLUDE_PATH",
+    "CPATH",
+    "LIBRARY_PATH",
+] as const;
+
+let baseEnv: Record<string, string | undefined> | undefined;
 
 export async function updateEnv(isDebug: boolean) {
     const { cFlags, cxxFlags, includeFlags, ldFlags, root } = await computeFlags(isDebug),
-        { tools } = toolchainState(),
-        inactiveRoot = buildRoot(!isDebug);
+        { ownClang, toolchain, tools } = toolchainState(),
+        base = (baseEnv ??= Object.fromEntries(BASE_ENV_LISTS.map((name) => [name, process.env[name]]))),
+        path = dualRoot("bin", isDebug);
 
-    const pkgConfPath = dedupPath(
-        `${root}/lib/pkgconfig${SEP}${root}/share/pkgconfig${SEP}${dropInactiveRoot(process.env.PKG_CONFIG_PATH, inactiveRoot)}`,
-        SEP,
-    );
-
-    const path = dualRoot("bin", isDebug);
-
-    if (toolchainState().toolchain === "msvc") {
+    if (toolchain === "msvc") {
         const include = dualRoot("include", isDebug),
             lib = dualRoot("lib", isDebug);
 
-        process.env.INCLUDE = replaceEntry(process.env.INCLUDE, include.active, include.inactive);
-        process.env.LIB = replaceEntry(process.env.LIB, lib.active, lib.inactive);
+        process.env.INCLUDE = replaceEntry(base.INCLUDE, include.active, include.inactive);
+        process.env.LIB = replaceEntry(base.LIB, lib.active, lib.inactive);
     }
 
-    const ownBin = toolchainState().ownClang ? `${buildRoot(false)}/bin${SEP}` : "";
-    process.env.PATH = ownBin + replaceEntry(process.env.PATH, path.active, path.inactive);
+    const ownBin = ownClang ? `${buildRoot(false)}/bin${SEP}` : "";
+    process.env.PATH = ownBin + replaceEntry(base.PATH, path.active, path.inactive);
 
     Object.assign(process.env, {
         ADDR2LINE: tools.addr2line,
         AR: tools.ar,
         AS: tools.asm,
-        C_INCLUDE_PATH: dedupPath(
-            `${root}/include${SEP}${dropInactiveRoot(process.env.C_INCLUDE_PATH, inactiveRoot)}`,
-            SEP,
-        ),
+        C_INCLUDE_PATH: prepend([`${root}/include`], base.C_INCLUDE_PATH),
         CC: tools.cc,
         CFLAGS: `${cFlags} ${includeFlags}`,
-        CPATH: dedupPath(`${root}/include${SEP}${dropInactiveRoot(process.env.CPATH, inactiveRoot)}`, SEP),
+        CPATH: prepend([`${root}/include`], base.CPATH),
         CXX: tools.cxx,
         CXXFLAGS: `${cxxFlags} ${includeFlags}`,
         LD: tools.cc,
         LDFLAGS: `${ldFlags} -L${root}/lib ${includeFlags}`,
-        LIBRARY_PATH: dedupPath(`${root}/lib${SEP}${dropInactiveRoot(process.env.LIBRARY_PATH, inactiveRoot)}`, SEP),
+        LIBRARY_PATH: prepend([`${root}/lib`], base.LIBRARY_PATH),
         OBJCOPY: tools.objcopy,
         OBJDUMP: tools.objdump,
-        PKG_CONFIG_PATH: pkgConfPath,
+        PKG_CONFIG_PATH: prepend([`${root}/lib/pkgconfig`, `${root}/share/pkgconfig`], base.PKG_CONFIG_PATH),
         RANLIB: tools.ranlib,
         RC: tools.rc,
         STRIP: tools.strip,
@@ -167,55 +146,58 @@ export async function updateEnv(isDebug: boolean) {
     });
 }
 
-async function createTargets(...libs: string[]) {
-    const targets = [
-        { lib: libs[0], name: "BZip2::BZip2" },
-        { lib: libs[1], name: "liblzma::liblzma" },
-        { lib: libs[2], name: "Deflate::Deflate" },
-        { lib: libs[3], name: "ZSTD::ZSTD" },
-    ];
-    const content = targets
+function createTargets(libs: Record<string, string>) {
+    const content = Object.entries(libs)
         .map(
-            (t) => `if(NOT TARGET ${t.name})
-    add_library(${t.name} STATIC IMPORTED GLOBAL)
-    set_target_properties(${t.name} PROPERTIES
-        IMPORTED_LOCATION "${buildRoot(false)}/lib/${t.lib}"
+            ([name, lib]) => `if(NOT TARGET ${name})
+    add_library(${name} STATIC IMPORTED GLOBAL)
+    set_target_properties(${name} PROPERTIES
+        IMPORTED_LOCATION "${buildRoot(false)}/lib/${lib}"
         INTERFACE_INCLUDE_DIRECTORIES "${buildRoot(false)}/include"
     )
 endif()`,
         )
         .join("\n\n");
 
-    await writeFile(INJECT_TARGETS, content);
+    writeFileSync(INJECT_TARGETS, content);
 }
 
-async function genToolchains(options: CliOptions, profile: ToolchainProfile): Promise<Conf> {
-    const ownClang = profile.ownClang !== false && existsSync(`${buildRoot(false)}/bin/clang.exe`),
+function genToolchains(profile: ToolchainProfile): Conf {
+    const { toolchain } = settings,
+        // The PGO library chain always uses CLANG64's clang: the profile is trained with it.
+        ownClang = profile.ownClang !== false && settings.libsPgo === null && existsSync(`${buildRoot(false)}/bin/clang.exe`),
         ownRuntimes = profile.ownRuntimes === true && existsSync(`${buildRoot(false)}/lib/libc++.a`),
-        shared = buildShared(options.toolchain, profile, ownClang, ownRuntimes),
-        debug = buildDebug(options, shared, profile),
-        release = buildRelease(options, shared, profile),
-        tools = getTools(options.toolchain),
-        fileTools = profile === CONSUMER_PROFILE ? getTools(options.toolchain, LLVM_ROOT) : tools;
+        shared = buildShared(toolchain, profile, ownClang, ownRuntimes),
+        debug = buildDebug(shared, profile),
+        release = buildRelease(shared, profile),
+        tools = getTools(toolchain),
+        fileTools = profile.consumer ? getTools(toolchain, LLVM_ROOT) : tools;
 
-    await mkdir(TOOLCHAINS_DIR, { recursive: true });
+    mkdirSync(TOOLCHAINS_DIR, { recursive: true });
 
-    if (options.toolchain === "msvc") {
-        await createTargets("bz2.lib", "lzma.lib", "deflatestatic.lib", "zstd_static.lib");
+    if (toolchain === "msvc") {
+        createTargets({
+            "BZip2::BZip2": "bz2.lib",
+            "liblzma::liblzma": "lzma.lib",
+            "Deflate::Deflate": "deflatestatic.lib",
+            "ZSTD::ZSTD": "zstd_static.lib",
+        });
     } else {
-        await createTargets("libbz2.a", "liblzma.a", "libdeflate.a", "libzstd.a");
+        createTargets({
+            "BZip2::BZip2": "libbz2.a",
+            "liblzma::liblzma": "liblzma.a",
+            "Deflate::Deflate": "libdeflate.a",
+            "ZSTD::ZSTD": "libzstd.a",
+        });
     }
 
-    await Promise.all([
-        writeFile(DEBUG_NATIVE, toIni(debug, fileTools)),
-        writeFile(RELEASE_NATIVE, toIni(release, fileTools)),
-        writeFile(DEBUG_TOOLCHAIN, toCmakeToolchain(debug, fileTools)),
-        writeFile(RELEASE_TOOLCHAIN, toCmakeToolchain(release, fileTools)),
-    ]);
-    await Promise.all([
-        writeFile(DEBUG_FFMPEG_ROOT, toFfmpegRoot(debug)),
-        writeFile(RELEASE_FFMPEG_ROOT, toFfmpegRoot(release)),
-    ]);
+    for (const isDebug of [true, false] as const) {
+        const config = isDebug ? debug : release,
+            name = buildDir(isDebug);
+        writeFileSync(`${TOOLCHAINS_DIR}/native-${name}.ini`, toIni(isDebug, config, fileTools));
+        writeFileSync(`${TOOLCHAINS_DIR}/${name}.cmake`, toCmakeToolchain(isDebug, config, fileTools));
+        writeFileSync(`${TOOLCHAINS_DIR}/ffmpeg-root-${name}.cmake`, toFfmpegRoot(isDebug));
+    }
 
     return {
         cxxStd: debug.cxxStd,
@@ -226,7 +208,7 @@ async function genToolchains(options: CliOptions, profile: ToolchainProfile): Pr
         ownLibcxx: profile.ownLibcxx === true,
         ownRuntimes,
         release: release.cflags,
-        toolchain: options.toolchain,
+        toolchain,
         tools,
     };
 }
@@ -278,20 +260,20 @@ export const DEBUG_TRAIN_CFLAGS = [
     "-fsanitize-annotate-debug-info=address",
 ];
 
-function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
+function buildDebug(shared: Shared, profile: ToolchainProfile): BuildConfig {
     const cflags = [...shared.cflags],
         ldflags = [...shared.ldflags];
 
     if (profile.debugOpt) {
         cflags.push(...RELEASE_NON_LTO_CFLAGS);
-        if (options.toolchain === "msvc") {
+        if (settings.toolchain === "msvc") {
             ldflags.push(...RELEASE_NON_LTO_MSVC_LINKER_FLAGS);
         } else {
             ldflags.push(...RELEASE_NON_LTO_LINKER_FLAGS);
         }
     } else {
         cflags.push("-O0", "-g2", "-gdwarf-5", "-glldb", "-gcolumn-info", "-fstandalone-debug");
-        if (options.toolchain === "msvc") {
+        if (settings.toolchain === "msvc") {
             cflags.push("-gcodeview");
         } else {
             cflags.push("-gz=zstd");
@@ -299,7 +281,7 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
         cflags.push("-fstack-protector-strong", "-ftrivial-auto-var-init=pattern");
     }
 
-    if (options.toolchain === "msvc") {
+    if (settings.toolchain === "msvc") {
         cflags.push("-fms-runtime-lib=dll", "-D_DLL", "-D_MSVC_STL_HARDENING=1", "-D_MSVC_STL_DESTRUCTOR_TOMBSTONES=1");
         //! -D_DLL has to be defined in ldflags in order for the linker to link the right runtime library.
         ldflags.push("-fms-runtime-lib=dll", "-D_DLL");
@@ -324,7 +306,7 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
         ldflags.push("-fsanitize=address");
     }
 
-    if (options.genToolchains) {
+    if (settings.genToolchains) {
         cflags.push(
             "-Wall",
             "-Wpedantic",
@@ -337,14 +319,9 @@ function buildDebug(options: CliOptions, shared: Shared, profile: ToolchainProfi
     }
 
     return {
-        buildType: "debug",
         cflags: cflags.join(" "),
-        cmakeBuildType: "Debug",
         cxxStd: profile.cxxStd ?? CXX_STD,
-        defaultLibrary: "shared",
         ldflags: ldflags.join(" "),
-        prefix: buildRoot(true),
-        toolchain: options.toolchain,
     };
 }
 
@@ -364,7 +341,7 @@ export function releaseOptFlags(lto: boolean, fatLto: boolean): string[] {
     return flags;
 }
 
-function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainProfile): BuildConfig {
+function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
     const lto = !settings.pgoTraining && profile.lto !== false,
         fatLto = profile.fatLto !== false,
         libsPgo = profile.pgo === false ? null : settings.libsPgo;
@@ -378,7 +355,7 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     }
 
     const linkerFlags: string[] = [];
-    if (options.toolchain === "msvc") {
+    if (settings.toolchain === "msvc") {
         linkerFlags.push(...RELEASE_NON_LTO_MSVC_LINKER_FLAGS);
         if (lto) {
             linkerFlags.push("-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3");
@@ -403,19 +380,19 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
         cflags.push("-fprofile-generate", "-fprofile-update=atomic");
         ldflags.push("-fprofile-generate");
     } else if (libsPgo === "use") {
-        cflags.push(`-fprofile-use=${settings.libsProfdata}`);
+        cflags.push(`-fprofile-use=${settings.libsIrProfdata || settings.libsProfdata}`);
     }
 
     if (
         profile.linkLibsProfile &&
-        options.toolchain !== "msvc" &&
+        settings.toolchain !== "msvc" &&
         !settings.pgoTraining &&
         existsSync(settings.libsProfdata)
     ) {
         ldflags.push(`-fprofile-use=${settings.libsProfdata}`);
     }
 
-    if (options.toolchain === "msvc") {
+    if (settings.toolchain === "msvc") {
         cflags.push("-fms-runtime-lib=static");
         ldflags.push("-fms-runtime-lib=static");
     } else {
@@ -424,20 +401,15 @@ function buildRelease(options: CliOptions, shared: Shared, profile: ToolchainPro
     }
 
     return {
-        buildType: "release",
         cflags: cflags.join(" "),
-        cmakeBuildType: "Release",
         cxxStd: profile.cxxStd ?? CXX_STD,
-        defaultLibrary: "static",
         ldflags: ldflags.join(" "),
-        prefix: buildRoot(false),
-        toolchain: options.toolchain,
     };
 }
 
 function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: boolean, ownRuntimes: boolean): Shared {
     const march = marchFlags(profile),
-        userClang = profile === CONSUMER_PROFILE && toolchain === "clang",
+        userClang = profile.consumer === true && toolchain === "clang",
         builtins = ownClang || userClang ? [] : ["-lclang_rt.builtins-x86_64"],
         cflags = ["-pipe", ...march, "-w", "-fopenmp", ...builtins],
         ldflags = [...march, "-fopenmp", ...builtins];
@@ -508,8 +480,12 @@ function resolveWinTarget(toolchain: Toolchain): string {
     return toolchain === "msvc" ? MSVC_TARGET : CLANG_WIN_TARGET;
 }
 
-function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
-    const lines: string[] = ["include(CMakeFindDependencyMacro)"];
+function toCmakeToolchain(isDebug: boolean, b: BuildConfig, tools: Tools): string {
+    const { toolchain } = settings,
+        type = buildDir(isDebug),
+        cmakeType = isDebug ? "Debug" : "Release",
+        root = buildRoot(isDebug),
+        lines: string[] = ["include(CMakeFindDependencyMacro)"];
 
     lines.push(
         `set(CMAKE_C_COMPILER ${tools.cc})`,
@@ -535,27 +511,27 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     lines.push(`set(CMAKE_CXX_STANDARD "${b.cxxStd}" CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_C_EXTENSIONS ON CACHE BOOL "" FORCE)`);
     lines.push(`set(CMAKE_CXX_EXTENSIONS ON CACHE BOOL "" FORCE)`);
-    lines.push(`set(CMAKE_BUILD_TYPE ${b.cmakeBuildType} CACHE STRING "" FORCE)`);
-    if (b.buildType === "debug") {
+    lines.push(`set(CMAKE_BUILD_TYPE ${cmakeType} CACHE STRING "" FORCE)`);
+    if (isDebug) {
         lines.push(`set(ENABLE_DEBUG_POSTFIX OFF CACHE BOOL "" FORCE)`);
         lines.push(`set(CMAKE_DEBUG_POSTFIX "" CACHE STRING "" FORCE)`);
     } else {
         lines.push(`set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)`);
         lines.push(`set(CMAKE_RELEASE_POSTFIX "" CACHE STRING "" FORCE)`);
     }
-    if (b.toolchain === "msvc") {
-        const runtime = b.buildType === "debug" ? "MultiThreadedDLL" : "MultiThreaded";
+    if (toolchain === "msvc") {
+        const runtime = isDebug ? "MultiThreadedDLL" : "MultiThreaded";
         lines.push(`set(CMAKE_MSVC_RUNTIME_LIBRARY "${runtime}" CACHE STRING "" FORCE)`);
     }
 
-    const suffix = b.cmakeBuildType.toUpperCase();
+    const suffix = cmakeType.toUpperCase();
     lines.push(`set(CMAKE_C_FLAGS_${suffix} ${cq(b.cflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_CXX_FLAGS_${suffix} ${cq(b.cflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_EXE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_SHARED_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_MODULE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
-    lines.push(`set(CMAKE_PREFIX_PATH ${cq(b.prefix)} CACHE STRING "" FORCE)`);
-    const prefix = cq(b.prefix).slice(1, -1),
+    lines.push(`set(CMAKE_PREFIX_PATH ${cq(root)} CACHE STRING "" FORCE)`);
+    const prefix = cq(root).slice(1, -1),
         pcDirs = [`${prefix}/lib/pkgconfig`, `${prefix}/share/pkgconfig`];
     lines.push("if (DEFINED ENV{LLVM_DEPS_PREFIX})");
     lines.push('    set(CMAKE_PREFIX_PATH "$ENV{LLVM_DEPS_PREFIX}" CACHE STRING "" FORCE)');
@@ -566,16 +542,16 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     lines.push(`    set(ENV{PKG_CONFIG_PATH} "${pcDirs.join(";")}")`);
     lines.push("endif()");
 
-    if (b.toolchain === "msvc") {
+    if (toolchain === "msvc") {
         lines.push('if (NOT CMAKE_BINARY_DIR MATCHES "/CMakeFiles/CMakeScratch/")');
         lines.push(`    set(CMAKE_PDB_OUTPUT_DIRECTORY "${prefix}/bin" CACHE STRING "" FORCE)`);
         lines.push("endif()");
     }
 
-    lines.push(`set(CMAKE_INSTALL_PREFIX ${cq(b.prefix)} CACHE PATH "" FORCE)`);
-    lines.push(`set(ICU_ROOT ${cq(b.prefix)} CACHE STRING "" FORCE)`);
-    lines.push(`set(RUST_PROFILE "${rustPlatform(b.toolchain)}-${b.buildType}" CACHE STRING "")`);
-    if (b.toolchain === "msvc") {
+    lines.push(`set(CMAKE_INSTALL_PREFIX ${cq(root)} CACHE PATH "" FORCE)`);
+    lines.push(`set(ICU_ROOT ${cq(root)} CACHE STRING "" FORCE)`);
+    lines.push(`set(RUST_PROFILE "${rustPlatform(toolchain)}-${type}" CACHE STRING "")`);
+    if (toolchain === "msvc") {
         const icuLibDir = `${prefix}/lib`;
         lines.push(`set(ICU_UC_LIBRARY "${icuLibDir}/cicuuc.lib" CACHE STRING "" FORCE)`);
         lines.push(`set(ICU_UC_LIBRARY_DEBUG "${icuLibDir}/cicuuc.lib" CACHE STRING "" FORCE)`);
@@ -585,8 +561,8 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
         lines.push(`set(ICU_DATA_LIBRARY_RELEASE "${icuLibDir}/cicudt.lib" CACHE STRING "" FORCE)`);
     }
 
-    const topLevelIncludes = [`\${CMAKE_CURRENT_LIST_DIR}/ffmpeg-root-${b.buildType}.cmake`];
-    if (b.buildType === "release") {
+    const topLevelIncludes = [`\${CMAKE_CURRENT_LIST_DIR}/ffmpeg-root-${type}.cmake`];
+    if (!isDebug) {
         topLevelIncludes.unshift("${CMAKE_CURRENT_LIST_DIR}/inject-targets.cmake");
     }
     lines.push(`set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "${topLevelIncludes.join(";")}" CACHE FILEPATH "" FORCE)`);
@@ -594,7 +570,7 @@ function toCmakeToolchain(b: BuildConfig, tools: Tools): string {
     return `${lines.join("\n")}\n`;
 }
 
-function toFfmpegRoot(b: BuildConfig): string {
+function toFfmpegRoot(isDebug: boolean): string {
     const projects = new Map<string, string[]>();
     for (const [variant, { consumers }] of Object.entries(FFMPEG_VARIANTS)) {
         if (!settings.ffmpegVariants.includes(variant)) {
@@ -602,7 +578,9 @@ function toFfmpegRoot(b: BuildConfig): string {
         }
         for (const [project, cacheVar] of consumers) {
             const sets = projects.get(project) ?? [];
-            sets.push(`    set(${cacheVar} "${b.prefix}/ffmpeg-${variant}" CACHE PATH "FFmpeg install prefix")`);
+            sets.push(
+                `    set(${cacheVar} "${buildRoot(isDebug)}/ffmpeg-${variant}" CACHE PATH "FFmpeg install prefix")`,
+            );
             projects.set(project, sets);
         }
     }
@@ -615,12 +593,15 @@ function toFfmpegRoot(b: BuildConfig): string {
     return `${branches.join("\n")}\nendif()\n`;
 }
 
-function toIni(b: BuildConfig, tools: Tools): string {
-    const lines: string[] = [];
+function toIni(isDebug: boolean, b: BuildConfig, tools: Tools): string {
+    const { toolchain } = settings,
+        type = buildDir(isDebug),
+        root = buildRoot(isDebug),
+        lines: string[] = [];
 
     lines.push("[binaries]");
-    if (b.toolchain !== "msvc") {
-        const winArgs = `-fuse-ld=lld --target=${resolveWinTarget(b.toolchain)}`;
+    if (toolchain !== "msvc") {
+        const winArgs = `-fuse-ld=lld --target=${resolveWinTarget(toolchain)}`;
         lines.push(
             `c = ${quoteArr(`sccache ${tools.cc} ${winArgs}`)}`,
             `cpp = ${quoteArr(`sccache ${tools.cxx} ${winArgs}`)}`,
@@ -638,18 +619,18 @@ function toIni(b: BuildConfig, tools: Tools): string {
     lines.push("[built-in options]");
     lines.push(`c_std = 'gnu${C_STD}'`);
     lines.push(`cpp_std = 'gnu++${b.cxxStd}'`);
-    lines.push(`default_library = '${b.defaultLibrary}'`);
-    lines.push(`buildtype = '${b.buildType}'`);
-    lines.push(`prefix = '${b.prefix}'`);
-    if (b.toolchain === "msvc") {
-        lines.push(`b_vscrt = '${b.buildType === "debug" ? "md" : "mt"}'`);
+    lines.push(`default_library = '${isDebug ? "shared" : "static"}'`);
+    lines.push(`buildtype = '${type}'`);
+    lines.push(`prefix = '${root}'`);
+    if (toolchain === "msvc") {
+        lines.push(`b_vscrt = '${isDebug ? "md" : "mt"}'`);
     }
     lines.push(`c_args = ${quoteArr(b.cflags)}`);
     lines.push(`c_link_args = ${quoteArr(b.ldflags)}`);
     lines.push(`cpp_args = c_args`);
     lines.push(`cpp_link_args = c_link_args`);
     lines.push("[properties]");
-    lines.push(`cmake_prefix_path = ${quoteArr(b.prefix)}`);
+    lines.push(`cmake_prefix_path = ${quoteArr(root)}`);
 
     return lines.join("\n");
 }

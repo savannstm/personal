@@ -1,12 +1,11 @@
 import { $ } from "dax";
-import { readdir } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 
-import { compareVersions } from "./check-updates.ts";
 import { VSWHERE } from "./settings.ts";
 
-export async function latestVersionDir(dir: string): Promise<string> {
-    const versions = await readdir(dir);
-    versions.sort(compareVersions);
+export function latestVersionDir(dir: string): string {
+    const versions = readdirSync(dir);
+    versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     const latest = versions.at(-1);
     if (!latest) {
         throw new Error(`Nothing found under ${dir}`);
@@ -22,5 +21,5 @@ export async function msvcToolsRoot(): Promise<string> {
         throw new Error("vswhere: no VS installation with VC.Tools found");
     }
     const toolsDir = `${vsRoot}/VC/Tools/MSVC`;
-    return `${toolsDir}/${await latestVersionDir(toolsDir)}`;
+    return `${toolsDir}/${latestVersionDir(toolsDir)}`;
 }

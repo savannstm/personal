@@ -7,11 +7,7 @@ on:
                 description: "Only build these libraries (comma-separated, empty = all)"
                 default: ""
             retrain:
-                description: "Retrain the PGO profiles even if profiles for this build's library versions and compiler are cached"
-                type: boolean
-                default: false
-            skip_pgo:
-                description: "Skip PGO training even if no profile is cached for this build's key"
+                description: "Retrain the PGO profiles even if profiles for this build's library versions and compiler are cached (also drops the cached prefixes and resume state, so everything is rebuilt with the new profiles)"
                 type: boolean
                 default: false
 
@@ -29,6 +25,9 @@ jobs:
     pgo-keys:
         name: PGO keys
         runs-on: windows-2025
+        permissions:
+            actions: write # retrain deletes caches
+            contents: read
         outputs:
             libs: ${{ steps.keys.outputs.libs }}
             llvm: ${{ steps.keys.outputs.llvm }}
@@ -47,21 +46,24 @@ jobs:
             - name: Profile keys
               id: keys
               shell: pwsh
-              env:
-                  GH_TOKEN: ${{ github.token }}
               run: |
                   $keys = node dev/build-libs/index.ts --pgo clang,lld,libs --print-pgo-keys | Select-String '^(libs|llvm|ir-clang|ir-lld)='
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                  $lines = $keys | ForEach-Object { $_.Line }
-                  if ('${{ inputs.skip_pgo }}' -eq 'true') {
-                      # Names of the most recently used cached profiles, whatever key they were trained under.
-                      $lines = foreach ($name in 'libs', 'llvm') {
-                          $key = gh cache list --key "pgo-$name-" --sort last_accessed_at --order desc --limit 1 --json key --jq '.[0].key'
-                          if (-not $key) { throw "skip_pgo: no cached $name profile" }
-                          "$name=$($key -replace '^pgo-', '')"
+                  $keys | ForEach-Object { $_.Line } | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
+
+            # Caches are immutable, so a retrained profile can't be saved over the old one: drop the profiles, the prefix built
+            # with them, and the resume state that would skip rebuilding with the new profiles.
+            - name: Drop cached profiles
+              if: ${{ inputs.retrain }}
+              shell: pwsh
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  foreach ($prefix in 'pgo-', 'libs-split-', 'llvm-bin-') {
+                      foreach ($id in (gh cache list --key $prefix --limit 100 --json id --jq '.[].id')) {
+                          gh cache delete $id
                       }
                   }
-                  $lines | Tee-Object -Append -FilePath $env:GITHUB_OUTPUT
 
             # Which profiles are already cached; the jobs below train only the missing ones.
             - name: Library profile cached?
@@ -104,8 +106,10 @@ jobs:
     pgo-clang:
         name: PGO clang
         needs: pgo-keys
-        if: ${{ !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-clang-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        if: ${{ needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-clang-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
+        env:
+            PGO_LLVM_IR_CLANG_PROFILE: ${{ needs.pgo-keys.outputs.ir-clang }}
         steps:
             - uses: actions/checkout@v7
 
@@ -127,9 +131,10 @@ jobs:
     pgo-libs:
         name: PGO libraries
         needs: pgo-keys
-        if: ${{ !inputs.skip_pgo && (needs.pgo-keys.outputs.libs-hit != 'true' || (needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')))) }}
+        if: ${{ needs.pgo-keys.outputs.libs-hit != 'true' || (needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project'))) }}
         runs-on: windows-2025
         env:
+            PGO_LIBS_PROFILE: ${{ needs.pgo-keys.outputs.libs }}
             # Whether the LLVM profile is still to be trained: its jobs need the prefix.
             LLVM_NEEDED: ${{ needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         steps:
@@ -180,8 +185,11 @@ jobs:
     pgo-lld:
         name: PGO lld
         needs: [pgo-keys, pgo-libs]
-        if: ${{ !failure() && !cancelled() && !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-lld-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        if: ${{ !failure() && !cancelled() && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-lld-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
+        env:
+            PGO_LIBS_PROFILE: ${{ needs.pgo-keys.outputs.libs }}
+            PGO_LLVM_IR_LLD_PROFILE: ${{ needs.pgo-keys.outputs.ir-lld }}
         steps:
             - uses: actions/checkout@v7
 
@@ -191,6 +199,7 @@ jobs:
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
                   key: pgo-${{ needs.pgo-keys.outputs.libs }}
+                  fail-on-cache-miss: true
 
             - uses: actions/cache/restore@v6
               with:
@@ -214,8 +223,13 @@ jobs:
     pgo-llvm:
         name: PGO LLVM
         needs: [pgo-keys, pgo-libs, pgo-clang, pgo-lld]
-        if: ${{ !failure() && !cancelled() && !inputs.skip_pgo && needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
+        if: ${{ !failure() && !cancelled() && needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
+        env:
+            PGO_LIBS_PROFILE: ${{ needs.pgo-keys.outputs.libs }}
+            PGO_LLVM_PROFILE: ${{ needs.pgo-keys.outputs.llvm }}
+            PGO_LLVM_IR_CLANG_PROFILE: ${{ needs.pgo-keys.outputs.ir-clang }}
+            PGO_LLVM_IR_LLD_PROFILE: ${{ needs.pgo-keys.outputs.ir-lld }}
         steps:
             - uses: actions/checkout@v7
 
@@ -225,6 +239,7 @@ jobs:
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
                   key: pgo-${{ needs.pgo-keys.outputs.libs }}
+                  fail-on-cache-miss: true
 
             - uses: actions/cache/restore@v6
               with:
@@ -261,7 +276,7 @@ jobs:
         if: ${{ !failure() && !cancelled() && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
         env:
-            PGO_LLVM_PROFILE: ${{ inputs.skip_pgo && needs.pgo-keys.outputs.llvm || '' }}
+            PGO_LLVM_PROFILE: ${{ needs.pgo-keys.outputs.llvm }}
         steps:
             - uses: actions/checkout@v7
 
@@ -282,6 +297,7 @@ jobs:
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.llvm }}
                   key: pgo-${{ needs.pgo-keys.outputs.llvm }}
+                  fail-on-cache-miss: true
 
 
             # The runtimes the llvm-runtimes job installed, unpacked over the restored prefix so the build links against them.
@@ -368,7 +384,7 @@ jobs:
         runs-on: windows-2025
         env:
             INPUT_ONLY: ${{ inputs.only }}
-            PGO_LIBS_PROFILE: ${{ inputs.skip_pgo && needs.pgo-keys.outputs.libs || '' }}
+            PGO_LIBS_PROFILE: ${{ needs.pgo-keys.outputs.libs }}
         steps:
             - uses: actions/checkout@v7
 
@@ -390,6 +406,7 @@ jobs:
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.libs }}
                   key: pgo-${{ needs.pgo-keys.outputs.libs }}
+                  fail-on-cache-miss: true
 
 
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,

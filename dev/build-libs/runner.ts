@@ -1,35 +1,38 @@
 import consola from "consola";
 import $ from "dax";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
 import { getPin, LIBRARIES, shouldBuildLibrary } from "./libraries.ts";
-import { BUILD_STATE_FILE, buildRoot, llvmPgo, MSYS2_ROOT, settings, WIN_TAR } from "./settings.ts";
+import { TrainingDone } from "./pgo-common.ts";
+import { pgoStamp } from "./pgo.ts"; // circular with pgo.ts (it builds the chain), but only used inside functions
+import { buildRoot, ROOT, settings, WIN_TAR } from "./settings.ts";
 import { configureToolchain, CONSUMER_PROFILE, profileOf, updateEnv } from "./toolchain.ts";
-import type { BuildState, CliOptions, Ctx, Library, Toolchain } from "./types.ts";
+import type { BuildState, Ctx, Library } from "./types.ts";
+
+const BUILD_STATE_FILE = `${ROOT}/build-state.json`;
 
 const BUILDERS = { cmake: buildCMake, meson: buildMeson, rust: buildRust };
 
-export function skipReason(library: Library, options: CliOptions): null | string {
-    if (library.toolchains && !library.toolchains.includes(options.toolchain)) {
+export function skipReason(library: Library): null | string {
+    if (library.toolchains && !library.toolchains.includes(settings.toolchain)) {
         return `${library.toolchains.join("/")} only`;
     }
-    if (options.toolchain === "clang" && !options.onlyRelease && profileOf(library).debugOpt) {
+    if (settings.toolchain === "clang" && !settings.onlyRelease && profileOf(library).debugOpt) {
         return "debug-optimized dependency, clang uses its CLANG64 package (--only-release builds it)";
     }
     return null;
 }
 
-export async function buildRepos(options: CliOptions) {
+export async function buildRepos() {
     const selected: Library[] = [],
         skipped = new Map<string, string[]>();
     for (const library of LIBRARIES) {
-        if (!shouldBuildLibrary(library.name, options)) {
+        if (!shouldBuildLibrary(library.name)) {
             continue;
         }
-        const reason = skipReason(library, options);
+        const reason = skipReason(library);
         if (reason) {
             const names = skipped.get(reason) ?? [];
             names.push(library.name);
@@ -47,30 +50,31 @@ export async function buildRepos(options: CliOptions) {
         process.exit(0);
     }
 
-    await mkdir(settings.reposRoot, { recursive: true });
-    await hideMsysLinkExe();
+    mkdirSync(settings.reposRoot, { recursive: true });
 
-    const state = await loadBuildState();
+    const state = loadBuildState();
 
-    for (const library of selected) {
-        console.info(`Building ${library.name}...`);
-        await buildLibrary(library, options, state);
+    try {
+        for (const library of selected) {
+            console.info(`Building ${library.name}...`);
+            await buildLibrary(library, state);
+        }
+    } catch (error) {
+        if (!(error instanceof TrainingDone)) {
+            throw error;
+        }
+        consola.success(pc.green(error.message));
     }
 
-    await stripLibmFromMsvcPkgconfig(options.toolchain);
-    await configureToolchain(options, CONSUMER_PROFILE);
+    await stripLibmFromMsvcPkgconfig();
+    configureToolchain(CONSUMER_PROFILE);
 }
 
-async function hideMsysLinkExe() {
-    await $`mv ${MSYS2_ROOT}/usr/bin/link.exe ${MSYS2_ROOT}/usr/bin/!link.exe`.noThrow();
-}
-
-async function stripLibmFromMsvcPkgconfig(toolchain: Toolchain) {
-    if (toolchain !== "msvc") {
+async function stripLibmFromMsvcPkgconfig() {
+    if (settings.toolchain !== "msvc") {
         return;
     }
     for (const root of [buildRoot(true), buildRoot(false)]) {
-        // \b after "m" keeps -lmimalloc and friends intact; a \b before "-" would never match after a space.
         await $`sd -- ${String.raw`-lm\b`} "" $(rg -l -- "-lm" ${`${root}/lib/pkgconfig`})`.noThrow().timeout(1000);
     }
 }
@@ -97,26 +101,24 @@ async function syncGit(path: string, { git, tag }: { git: string; tag: string })
     await $`git checkout ${tag} --force`.cwd(path);
 }
 
-// What the build state compares against: a library that builds several variants also records which ones.
-function stampOf(library: Library, pin: string): string {
-    return library.variants ? `${pin}|${library.variants()}` : pin;
+function stampOf(library: Library, pin: string, withVariants = true): string {
+    return [pin, withVariants && library.variants?.(), pgoStamp(library)].filter(Boolean).join("|");
 }
 
-async function buildLibrary(library: Library, options: CliOptions, state: BuildState) {
+async function buildLibrary(library: Library, state: BuildState) {
     const path = `${settings.reposRoot}/${library.name}`,
         { source } = library,
         git = "git" in source ? source : null;
     let pin = getPin(library);
 
     let variants = [true, false];
-    if (options.onlyDebug !== options.onlyRelease) {
-        variants = [options.onlyDebug];
+    if (settings.onlyDebug !== settings.onlyRelease) {
+        variants = [settings.onlyDebug];
     }
     if (library.releaseOnly) {
         variants = variants.filter((isDebug) => !isDebug);
     }
 
-    // A branch moves: update it first so the build state is keyed on the commit, not the branch name.
     const tracksBranch = git !== null && BRANCH_TAGS.has(git.tag);
     if (git && tracksBranch) {
         await syncGit(path, git);
@@ -130,7 +132,6 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
                 `${library.name}:${isDebug ? "debug" : "release"}`,
                 buildRoot(isDebug),
                 stampOf(library, pin),
-                options,
             ),
         )
     ) {
@@ -139,18 +140,17 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
 
     if ("archive" in source) {
         const { archive, subdir } = source;
-        await rm(path, { force: true, recursive: true });
-        await mkdir(path, { recursive: true });
+        rmSync(path, { force: true, recursive: true });
+        mkdirSync(path, { recursive: true });
         const fileName = archive.split("/").pop()?.split("?")[0] ?? "archive",
             archivePath = `${path}.${fileName.split(".").slice(1).join(".") || "tmp"}`;
         if (!existsSync(archivePath)) {
-            // -f: an HTTP error must not be saved as the archive; the rename keeps an interrupted download out of the cache.
             await $`curl -fL -o ${`${archivePath}.part`} ${archive}`;
-            await rename(`${archivePath}.part`, archivePath);
+            renameSync(`${archivePath}.part`, archivePath);
         }
         await $`${WIN_TAR} -xf ${archivePath} -C ${path}`;
 
-        await buildVariants(library, `${path}/${subdir}`, variants, state, pin, options);
+        await buildVariants(library, `${path}/${subdir}`, variants, state, pin);
         return;
     }
 
@@ -158,34 +158,18 @@ async function buildLibrary(library: Library, options: CliOptions, state: BuildS
         await syncGit(path, source);
     }
 
-    await buildVariants(library, path, variants, state, pin, options);
+    await buildVariants(library, path, variants, state, pin);
 }
 
-async function buildVariants(
-    library: Library,
-    path: string,
-    variants: boolean[],
-    state: BuildState,
-    pin: string,
-    options: CliOptions,
-) {
-    const msvc = options.toolchain === "msvc";
+async function buildVariants(library: Library, path: string, variants: boolean[], state: BuildState, pin: string) {
+    const msvc = settings.toolchain === "msvc";
 
     if (existsSync(`${path}/.git`)) {
         await $`git reset --hard`.cwd(path).noThrow();
     }
 
-    await configureToolchain(options, profileOf(library));
-    const trainsLlvm =
-        library.name === "llvm-project" &&
-        settings.pgoTraining &&
-        llvmPgo() &&
-        (settings.pgoIrOnly || !existsSync(settings.llvmProfdata));
+    configureToolchain(profileOf(library));
     await library.prepare?.({ msvc, path });
-    if (trainsLlvm) {
-        consola.success(pc.green("LLVM profile trained; skipping the build."));
-        process.exit(0);
-    }
 
     for (const isDebug of variants) {
         const variant = isDebug ? "debug" : "release",
@@ -193,23 +177,23 @@ async function buildVariants(
             root = buildRoot(isDebug);
 
         const prefixState = state.prefixes[root];
-        if (prefixState && prefixState.toolchain !== options.toolchain) {
+        if (prefixState && prefixState.toolchain !== settings.toolchain) {
             consola.warn(
                 pc.yellow(
-                    `Prefix "${root}" was built with toolchain "${prefixState.toolchain}" but current toolchain is "${options.toolchain}". Entries for this prefix will be rebuilt.`,
+                    `Prefix "${root}" was built with toolchain "${prefixState.toolchain}" but current toolchain is "${settings.toolchain}". Entries for this prefix will be rebuilt.`,
                 ),
             );
             const accepted = await $.confirm(`Clear all cached build state for prefix "${root}" and rebuild?`);
             if (accepted) {
                 delete state.prefixes[root];
-                await saveBuildState(state);
+                saveBuildState(state);
             } else {
                 consola.warn(pc.yellow(`Skipping builds for prefix "${root}".`));
                 continue;
             }
         }
 
-        if (alreadyBuilt(state, vkey, root, stampOf(library, pin), options)) {
+        if (alreadyBuilt(state, vkey, root, stampOf(library, pin))) {
             consola.info(pc.cyan(`[${library.name}] Already built at ${pin} (${variant}), skipping.`));
             continue;
         }
@@ -227,12 +211,13 @@ async function buildVariants(
             root,
             step: async (sub, build) => {
                 const subKey = `${vkey}:${sub}`;
-                if (alreadyBuilt(state, subKey, root, pin, options)) {
+                const subStamp = stampOf(library, pin, false);
+                if (alreadyBuilt(state, subKey, root, subStamp)) {
                     consola.info(pc.cyan(`[${library.name}] ${sub} (${variant}) already built, skipping.`));
                     return;
                 }
                 await build();
-                await markBuilt(state, subKey, root, pin, options.toolchain);
+                await markBuilt(state, subKey, root, subStamp);
             },
         };
 
@@ -240,16 +225,16 @@ async function buildVariants(
         await (typeof build === "function" ? build(ctx) : BUILDERS[build](library, ctx));
 
         await library.finish?.(ctx);
-        await markBuilt(state, vkey, root, stampOf(library, pin), options.toolchain);
+        await markBuilt(state, vkey, root, stampOf(library, pin));
     }
 }
 
-async function loadBuildState(): Promise<BuildState> {
+function loadBuildState(): BuildState {
     if (!existsSync(BUILD_STATE_FILE)) {
         return { prefixes: {} };
     }
     try {
-        return JSON.parse(await readFile(BUILD_STATE_FILE, "utf8")) as BuildState;
+        return JSON.parse(readFileSync(BUILD_STATE_FILE, "utf8")) as BuildState;
     } catch (error) {
         consola.warn(
             pc.yellow(
@@ -260,29 +245,23 @@ async function loadBuildState(): Promise<BuildState> {
     }
 }
 
-async function saveBuildState(state: BuildState): Promise<void> {
-    // Write-then-rename: a kill mid-write must not leave a truncated state file.
-    await writeFile(`${BUILD_STATE_FILE}.tmp`, JSON.stringify(state, null, 4));
-    await rename(`${BUILD_STATE_FILE}.tmp`, BUILD_STATE_FILE);
+function saveBuildState(state: BuildState): void {
+    writeFileSync(`${BUILD_STATE_FILE}.tmp`, JSON.stringify(state, null, 4));
+    renameSync(`${BUILD_STATE_FILE}.tmp`, BUILD_STATE_FILE);
 }
 
-export function alreadyBuilt(state: BuildState, key: string, prefix: string, pin: string, options: CliOptions): boolean {
+export function alreadyBuilt(state: BuildState, key: string, prefix: string, pin: string): boolean {
     const prefixState = state.prefixes[prefix];
-    if (!prefixState || prefixState.toolchain !== options.toolchain) {
+    if (!prefixState || prefixState.toolchain !== settings.toolchain) {
         return false;
     }
-    return !options.force && prefixState.entries[key]?.tag === pin;
+    return !settings.force && prefixState.entries[key]?.tag === pin;
 }
 
-async function markBuilt(
-    state: BuildState,
-    key: string,
-    prefix: string,
-    pin: string,
-    toolchain: Toolchain,
-): Promise<void> {
+async function markBuilt(state: BuildState, key: string, prefix: string, pin: string): Promise<void> {
+    const { toolchain } = settings;
     state.prefixes[prefix] ??= { entries: {}, toolchain };
     state.prefixes[prefix].toolchain = toolchain;
     state.prefixes[prefix].entries[key] = { tag: pin };
-    await saveBuildState(state);
+    saveBuildState(state);
 }
