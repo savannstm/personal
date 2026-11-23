@@ -20,3 +20,15 @@ runs:
               C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               C:\msys64\usr\bin\bash.exe -lc "rm -rf /var/cache/pacman/pkg/*"
+
+        # Fails the job before any training or build when the runner lacks an x86-64-v3 instruction (0xC000001D, SIGILL).
+        # Installs clang early; index.ts's own toolchain install then finds it already present.
+        - name: x86-64-v3 check
+          shell: pwsh
+          run: |
+              C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-clang-x86_64-clang"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              C:\msys64\clang64\bin\clang.exe --target=x86_64-w64-windows-gnu -march=x86-64-v3 -O2 -o "$env:RUNNER_TEMP\x86-64-v3-check.exe" .github/actions/build-libs-setup/x86-64-v3-check.c
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              & "$env:RUNNER_TEMP\x86-64-v3-check.exe"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -7,7 +7,7 @@ import { TrainingDone } from "./pgo-common.ts";
 import { trainLlvm } from "./pgo-llvm.ts";
 import { buildDir, CLANG64, CLANG64_PKG_CONFIG, llvmPgo, ROOT, settings } from "./settings.ts";
 import { raw } from "./shell.ts";
-import { CLANG_WIN_TARGET, marchFlags, profileOf, releaseOptFlags } from "./toolchain.ts";
+import { CLANG_WIN_TARGET, DEFAULT_PROFILE, marchFlags, releaseOptFlags } from "./toolchain.ts";
 import type { Ctx, Library, ToolchainProfile } from "./types.ts";
 
 const LLVM_SOURCE = { git: "https://github.com/llvm/llvm-project", tag: "llvmorg-23.1.6" };
@@ -121,8 +121,8 @@ export const llvmProject: Library = {
             replaceInFile(`${path}/${project}/CMakeLists.txt`, "add_subdirectory(docs)", "");
         }
         await buildLlvmTablegen(path);
-        const profile = profileOf(llvmProject),
-            optFlags = [...marchFlags(profile), ...releaseOptFlags(false, false)].join(" ");
+        // The profile's znver1 is for the final build only: training uses the default -march/-mtune.
+        const optFlags = [...marchFlags(DEFAULT_PROFILE), ...releaseOptFlags(false, false)].join(" ");
         if (await trainLlvm(path, llvmArgs(LLVM_TABLEGEN_BIN), optFlags)) {
             throw new TrainingDone("LLVM profile trained; skipping the build.");
         }
