@@ -138,6 +138,8 @@ export const llvmRuntimes: Library = {
     name: "llvm-runtimes",
     source: LLVM_SOURCE,
     releaseOnly: true,
+    // The build stamp ignores cmake args; without this, a cached build from before a config change (e.g. compiler-rt) is skipped.
+    variants: () => LLVM_RUNTIMES_ARGS,
     profile: { ...LLVM_PROFILE, ownLibcxx: true, lto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-openmp-static-windows.patch");
