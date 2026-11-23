@@ -200,8 +200,10 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
                     "-o",
                     `${lldDir}/debug.exe`,
                 ];
-            await $`clang++ ${releaseArgs}`.env(clang64Env);
-            await $`clang++ ${debugArgs}`.env(clang64Env);
+            // lld ends with TerminateProcess unless LLD_IN_TEST is set, which skips the profile runtime's atexit dump.
+            const lldEnv = { ...clang64Env, LLD_IN_TEST: "1" };
+            await $`clang++ ${releaseArgs}`.env(lldEnv);
+            await $`clang++ ${debugArgs}`.env(lldEnv);
         }
 
         return profraws(rawDir);
