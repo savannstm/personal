@@ -5,7 +5,7 @@ import { applyPatch, configureCMake, replaceInFile } from "./builders.ts";
 import { msvcToolsRoot } from "./msvc.ts";
 import { TrainingDone } from "./pgo-common.ts";
 import { trainLlvm } from "./pgo-llvm.ts";
-import { buildDir, CLANG64, CLANG64_PKG_CONFIG, llvmPgo, ROOT, settings } from "./settings.ts";
+import { buildDir, buildRoot, CLANG64, CLANG64_PKG_CONFIG, llvmPgo, ROOT, settings } from "./settings.ts";
 import { raw } from "./shell.ts";
 import { CLANG_WIN_TARGET, DEFAULT_PROFILE, marchFlags, releaseOptFlags } from "./toolchain.ts";
 import type { Ctx, Library, ToolchainProfile } from "./types.ts";
@@ -15,7 +15,7 @@ export const LLVM_MAJOR = /\d+/.exec(LLVM_SOURCE.tag)![0];
 const LLVM_PROFILE: Partial<ToolchainProfile> = {
         cxxStd: "20",
         debugOpt: false,
-        march: "znver1",
+        march: "x86-64-v3",
         mtune: "znver1",
         ownClang: false,
         rtti: true,
@@ -86,7 +86,7 @@ async function buildLlvmTablegen(llvmPath: string) {
     await $`ninja ${LLVM_TABLEGEN_TOOLS}`.cwd(LLVM_TABLEGEN_DIR);
 }
 
-const LLVM_RUNTIMES_ARGS = `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
+const llvmRuntimesArgs = () => `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=${buildRoot(false)}/lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
 async function buildLlvmTarget(
     { isDebug, path }: Ctx,
@@ -121,8 +121,7 @@ export const llvmProject: Library = {
             replaceInFile(`${path}/${project}/CMakeLists.txt`, "add_subdirectory(docs)", "");
         }
         await buildLlvmTablegen(path);
-        // The profile's znver1 is for the final build only: training uses the default -march/-mtune.
-        const optFlags = [...marchFlags(DEFAULT_PROFILE), ...releaseOptFlags(false, false)].join(" ");
+        const optFlags = [...marchFlags({ ...DEFAULT_PROFILE, ...LLVM_PROFILE }), ...releaseOptFlags(false, false)].join(" ");
         if (await trainLlvm(path, llvmArgs(LLVM_TABLEGEN_BIN), optFlags)) {
             throw new TrainingDone("LLVM profile trained; skipping the build.");
         }
@@ -139,7 +138,7 @@ export const llvmRuntimes: Library = {
     source: LLVM_SOURCE,
     releaseOnly: true,
     // The build stamp ignores cmake args; without this, a cached build from before a config change (e.g. compiler-rt) is skipped.
-    variants: () => LLVM_RUNTIMES_ARGS,
+    variants: () => llvmRuntimesArgs(),
     profile: { ...LLVM_PROFILE, ownLibcxx: true, lto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-openmp-static-windows.patch");
@@ -161,7 +160,7 @@ export const llvmRuntimes: Library = {
         await buildLlvmTarget(
             ctx,
             "runtimes",
-            `${LLVM_RUNTIMES_ARGS} -DCMAKE_ASM_MASM_COMPILER="${msvcBin}/ml64.exe"`,
+            `${llvmRuntimesArgs()} -DCMAKE_ASM_MASM_COMPILER="${msvcBin}/ml64.exe"`,
             "install",
             { ...process.env, PATH: `${msvcBin};${process.env.PATH ?? ""}` },
         );
