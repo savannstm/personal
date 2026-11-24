@@ -213,11 +213,17 @@ function genToolchains(profile: ToolchainProfile): Conf {
         });
     }
 
+    // CMake and Meson give C++ the C flags, whose resource-dir headers (buildShared) would be searched before libc++'s wrappers.
+    const cxxLead =
+        ownRuntimes && !ownClang
+            ? `-nostdinc++ ${installedRuntimes(buildRoot(false))!.cxxIncludes.map((dir) => `-isystem ${dir}`).join(" ")}`
+            : "";
+
     for (const isDebug of [true, false] as const) {
         const config = isDebug ? debug : release,
             name = buildDir(isDebug);
-        writeFileSync(`${TOOLCHAINS_DIR}/native-${name}.ini`, toIni(isDebug, config, fileTools));
-        writeFileSync(`${TOOLCHAINS_DIR}/${name}.cmake`, toCmakeToolchain(isDebug, config, fileTools));
+        writeFileSync(`${TOOLCHAINS_DIR}/native-${name}.ini`, toIni(isDebug, config, fileTools, cxxLead));
+        writeFileSync(`${TOOLCHAINS_DIR}/${name}.cmake`, toCmakeToolchain(isDebug, config, fileTools, cxxLead));
         writeFileSync(`${TOOLCHAINS_DIR}/ffmpeg-root-${name}.cmake`, toFfmpegRoot(isDebug));
     }
 
@@ -513,7 +519,7 @@ function resolveWinTarget(toolchain: Toolchain): string {
     return toolchain === "msvc" ? MSVC_TARGET : CLANG_WIN_TARGET;
 }
 
-function toCmakeToolchain(isDebug: boolean, b: BuildConfig, tools: Tools): string {
+function toCmakeToolchain(isDebug: boolean, b: BuildConfig, tools: Tools, cxxLead: string): string {
     const { toolchain } = settings,
         type = buildDir(isDebug),
         cmakeType = isDebug ? "Debug" : "Release",
@@ -559,7 +565,7 @@ function toCmakeToolchain(isDebug: boolean, b: BuildConfig, tools: Tools): strin
 
     const suffix = cmakeType.toUpperCase();
     lines.push(`set(CMAKE_C_FLAGS_${suffix} ${cq(b.cflags)} CACHE STRING "" FORCE)`);
-    lines.push(`set(CMAKE_CXX_FLAGS_${suffix} ${cq(b.cflags)} CACHE STRING "" FORCE)`);
+    lines.push(`set(CMAKE_CXX_FLAGS_${suffix} ${cq(`${cxxLead} ${b.cflags}`.trim())} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_EXE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_SHARED_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
     lines.push(`set(CMAKE_MODULE_LINKER_FLAGS_${suffix} ${cq(b.ldflags)} CACHE STRING "" FORCE)`);
@@ -626,7 +632,7 @@ function toFfmpegRoot(isDebug: boolean): string {
     return `${branches.join("\n")}\nendif()\n`;
 }
 
-function toIni(isDebug: boolean, b: BuildConfig, tools: Tools): string {
+function toIni(isDebug: boolean, b: BuildConfig, tools: Tools, cxxLead: string): string {
     const { toolchain } = settings,
         type = buildDir(isDebug),
         root = buildRoot(isDebug),
@@ -660,7 +666,7 @@ function toIni(isDebug: boolean, b: BuildConfig, tools: Tools): string {
     }
     lines.push(`c_args = ${quoteArr(b.cflags)}`);
     lines.push(`c_link_args = ${quoteArr(b.ldflags)}`);
-    lines.push(`cpp_args = c_args`);
+    lines.push(`cpp_args = ${quoteArr(`${cxxLead} ${b.cflags}`)}`);
     lines.push(`cpp_link_args = c_link_args`);
     lines.push("[properties]");
     lines.push(`cmake_prefix_path = ${quoteArr(root)}`);
