@@ -538,7 +538,7 @@ jobs:
               run: |
                   $env:PATH = "C:/dev-clang/release/${{ matrix.ruby }}/bin;C:/Windows/System32;C:/Windows"
                   ruby -v
-                  ruby -S gem install rake nokogiri --no-document
+                  gem install rake nokogiri --no-document
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   ruby -rnokogiri -e 'puts Nokogiri::VERSION'
 

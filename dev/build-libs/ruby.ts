@@ -63,9 +63,10 @@ async function buildRubyX64(path: string, prefix: string, legacy: boolean) {
 
     // setjmp: configure picks __builtin_setjmp, which crashes every raise under clang on Windows. libwinpthread (static) is for
     // clock_gettime. 2.7 detects the C runtime by the msvc*.dll its test program imports; UCRT has none, so say it's UCRT.
-    // 2.7 builds only zlib and stringio (encodings are built regardless), like the 1.x rubies, and no rubygems.
+    // 2.7 builds only zlib and stringio (encodings are built regardless), like the 1.x rubies, and no rubygems; monitor is
+    // there with digest because the installer (tool/rbinstall.rb) loads rubygems, which requires them.
     await buildAutoconf(path, false, prefix, {
-        args: `--build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 --disable-install-doc --disable-yjit --disable-zjit --with-baseruby=no --with-setjmp-type=setjmp${legacy ? " --with-ext=stringio,zlib --disable-rubygems" : ""} --with-opt-dir=${buildRoot(false)}`,
+        args: `--build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 --disable-install-doc --disable-yjit --disable-zjit --with-baseruby=no --with-setjmp-type=setjmp${legacy ? " --with-ext='digest*,monitor,stringio,zlib' --disable-rubygems" : ""} --with-opt-dir=${buildRoot(false)}`,
         env: `RUBYOPT= LIBS=-l:libwinpthread.a${legacy ? " rb_cv_msvcrt=ucrt140" : ""} CFLAGS="${cflags}" LDFLAGS="${ldflags}"`,
         jobs: "$(nproc)",
         libs: false,
@@ -87,6 +88,8 @@ async function patchRuby27(path: string) {
         "@WINDRES@ -DRC_INVOKED",
     );
     copyFileSync(`${ROOT}/patches/ruby/mkexports-3.3.rb`, `${path}/win32/mkexports.rb`);
+    // The minimal build installs no gems: installing the default and bundled ones needs openssl, psych and more.
+    replaceInFile(`${path}/tool/rbinstall.rb`, "$exclude = []", "$exclude = [:gem]");
     const file = `${path}/win32/win32.c`;
     replaceInFile(file, /FILE_FILENO\((std[a-z]+)\) = (open_null\(\d\));/g, "$2;");
     replaceInFile(file, /^clock_(gettime|getres)\(clockid_t/gm, "rb_unused_clock_$1(clockid_t");
