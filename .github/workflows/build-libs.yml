@@ -533,7 +533,7 @@ jobs:
 
             # Only the install on PATH, like on a user's machine.
             - name: Gems
-              if: ${{ !startsWith(matrix.ruby, 'ruby-1.') }}
+              if: ${{ !startsWith(matrix.ruby, 'ruby-1.') && !startsWith(matrix.ruby, 'ruby-2.') }}
               shell: pwsh
               run: |
                   $env:PATH = "C:/dev-clang/release/${{ matrix.ruby }}/bin;C:/Windows/System32;C:/Windows"

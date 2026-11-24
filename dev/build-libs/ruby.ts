@@ -165,12 +165,21 @@ const RUBY_SMOKE_TEST = `
 async function buildRuby(p: string, name: string) {
     const legacy = name.startsWith("ruby-1.8"),
         triple = "i686-w64-mingw32",
-        x64Flag = /^(-march=|--target=|-fopenmp|-static-openmp|-l|-L)/,
-        keep = (flags: string) =>
-            flags
-                .split(" ")
-                .filter((flag) => !x64Flag.test(flag))
-                .join(" "),
+        // The repo's x64 resource dir (its headers and compiler-rt) and runtime choices have no i686 counterpart: llvm-mingw's clang uses its own.
+        x64Flag = /^(-march=|--target=|-fopenmp|-static-openmp|-l|-L|-rtlib=|--unwindlib=)/,
+        keep = (flags: string) => {
+            const tokens = flags.split(" "),
+                kept: string[] = [];
+            for (let idx = 0; idx < tokens.length; idx++) {
+                const flag = tokens[idx]!;
+                if (flag === "-resource-dir" || (flag === "-isystem" && tokens[idx + 1]!.includes("/lib/clang/"))) {
+                    idx++;
+                } else if (!x64Flag.test(flag)) {
+                    kept.push(flag);
+                }
+            }
+            return kept.join(" ");
+        },
         isa = "-mavx -mavx2 -mbmi -mbmi2 -mf16c -mfma -mlzcnt -mmovbe -mpopcnt -msse4.2 -mxsave",
         bin = toMsysPath(`${LLVM_MINGW_I686}/bin`),
         cflags = `${keep(process.env.CFLAGS!)} ${isa} ${legacy ? "-fgnu89-inline -D_FILE_OFFSET_BITS=64" : ""} -fno-strict-aliasing -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int -DNDEBUG`,

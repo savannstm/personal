@@ -92,7 +92,11 @@ export async function computeFlags(isDebug: boolean) {
             .trim()
             .replaceAll("-I", "-isystem ");
 
-    return { cFlags, cxxFlags, includeFlags, ldFlags, root };
+    // pkg-config drops the prefix's own include directory, and the MSYS2 packages' one (-isystem CLANG64/include, from the .pc files of
+    // libraries not in the prefix) would then be searched first: the prefix's static headers must win (libzip's ZIP_STATIC, libjpeg's API).
+    const prefixInclude = flags.toolchain === "msvc" ? "" : `-isystem ${root}/include `;
+
+    return { cFlags, cxxFlags, includeFlags: prefixInclude + includeFlags, ldFlags, root };
 }
 
 function dualRoot(sub: string, isDebug: boolean) {

@@ -21,10 +21,10 @@ const HOST_ARCH = "Hostx64",
 
 const REQUIRED_UTILITIES = ["clang", "cmake", "git", "meson", "ninja", "rg", "sccache", "sd"] as const;
 
-// llvm-mingw is only needed by the ruby builds. cargo-c and cargo-binstall are installed by the rust builder when it needs them.
+// llvm-mingw is only needed by the i686 (1.x) ruby builds. cargo-c and cargo-binstall are installed by the rust builder when it needs them.
 const needsRuby = () =>
     !libsTrainingOnly() &&
-    LIBRARIES.some((library) => library.name.startsWith("ruby-") && shouldBuildLibrary(library.name));
+    LIBRARIES.some((library) => library.name.startsWith("ruby-1.") && shouldBuildLibrary(library.name));
 
 async function checkUtilities(names: readonly string[]): Promise<string[]> {
     const missing: string[] = [];
