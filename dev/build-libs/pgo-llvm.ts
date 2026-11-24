@@ -28,6 +28,7 @@ import {
     CLANG_WIN_TARGET,
     computeFlags,
     DEBUG_TRAIN_CFLAGS,
+    installedRuntimes,
     RELEASE_NON_LTO_LINKER_FLAGS,
     updateEnv,
 } from "./toolchain.ts";
@@ -86,10 +87,18 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
         }
     };
 
-    const resourceDir = `${CLANG64}/lib/clang/${latestVersionDir(`${CLANG64}/lib/clang`)}`,
-        trainRuntime = `--sysroot=${CLANG64} -resource-dir ${resourceDir} -rtlib=compiler-rt --unwindlib=libunwind -L ${CLANG64}/lib`,
-        trainCFlags = `${trainRuntime} -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
-        trainCxxFlags = `${trainRuntime} -stdlib=libc++ -isystem ${CLANG64}/include/c++/v1 -isystem ${resourceDir}/include -isystem ${CLANG64}/include`,
+    // The runtimes come from llvm-runtimes' install once it's in the prefix; CLANG64's clang headers stay (version-specific).
+    const runtimes = installedRuntimes(buildRoot(false)),
+        clangResource = `${CLANG64}/lib/clang/${latestVersionDir(`${CLANG64}/lib/clang`)}`,
+        clangHeaders = `${clangResource}/include`,
+        libDirs = [...(runtimes?.libDirs ?? []), `${CLANG64}/lib`].map((dir) => `-L ${dir}`).join(" "),
+        cxxIncludes = (runtimes?.cxxIncludes ?? [`${CLANG64}/include/c++/v1`])
+            .map((dir) => `-isystem ${dir}`)
+            .join(" "),
+        trainRuntime = `--sysroot=${CLANG64} -resource-dir ${runtimes?.resourceDir ?? clangResource} -rtlib=compiler-rt --unwindlib=libunwind ${libDirs}`,
+        rtHeaders = runtimes ? `-isystem ${runtimes.resourceDir}/include ` : "",
+        trainCFlags = `${trainRuntime} ${rtHeaders}-isystem ${clangHeaders} -isystem ${CLANG64}/include`,
+        trainCxxFlags = `${trainRuntime} -stdlib=libc++ ${runtimes ? "-nostdinc++ " : ""}${cxxIncludes} ${rtHeaders}-isystem ${clangHeaders} -isystem ${CLANG64}/include`,
         trainLdFlags = `${trainRuntime} -stdlib=libc++`,
         clang64Env = { ...process.env, PATH: `${CLANG64}/bin;${process.env.PATH ?? ""}` },
         mainCpp = `${lldDir}/main.cpp`,

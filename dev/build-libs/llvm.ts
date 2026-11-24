@@ -86,7 +86,7 @@ async function buildLlvmTablegen(llvmPath: string) {
     await $`ninja ${LLVM_TABLEGEN_TOOLS}`.cwd(LLVM_TABLEGEN_DIR);
 }
 
-const llvmRuntimesArgs = () => `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=${buildRoot(false)}/lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
+const llvmRuntimesArgs = () => `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=${buildRoot(false)}/lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
 async function buildLlvmTarget(
     { isDebug, path }: Ctx,
@@ -104,7 +104,7 @@ export const llvmProject: Library = {
     name: "llvm-project",
     source: LLVM_SOURCE,
     releaseOnly: true,
-    profile: { ...LLVM_PROFILE, ownRuntimes: true, fatLto: false },
+    profile: { ...LLVM_PROFILE, fatLto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-argdumper.patch");
         pruneLlvmSources(path, [
@@ -139,7 +139,7 @@ export const llvmRuntimes: Library = {
     releaseOnly: true,
     // The build stamp ignores cmake args; without this, a cached build from before a config change (e.g. compiler-rt) is skipped.
     variants: () => llvmRuntimesArgs(),
-    profile: { ...LLVM_PROFILE, ownLibcxx: true, lto: false },
+    profile: { ...LLVM_PROFILE, ownLibcxx: true, ownRuntimes: false, lto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-openmp-static-windows.patch");
         pruneLlvmSources(path, [

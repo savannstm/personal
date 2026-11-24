@@ -1,7 +1,8 @@
 import $ from "dax";
-import { appendFileSync, cpSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import {
+    addFindDependency,
     applyPatch,
     buildAutoconf,
     buildPlain,
@@ -13,15 +14,8 @@ import {
 } from "./builders.ts";
 import { FFMPEG_VARIANTS, ffmpegCodecArgs } from "./ffmpeg.ts";
 import { llvmProject, llvmRuntimes } from "./llvm.ts";
-import { ruby } from "./ruby.ts";
-import {
-    buildDir,
-    MAGICK_PGO_VARIANT,
-    magickSuffix,
-    ROOT,
-    settings,
-    TOOLCHAINS_DIR,
-} from "./settings.ts";
+import { ruby, rubyX64 } from "./ruby.ts";
+import { buildDir, MAGICK_PGO_VARIANT, magickSuffix, ROOT, settings, TOOLCHAINS_DIR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
@@ -40,7 +34,7 @@ async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
     }
 }
 
-export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg"];
+export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg", "openssl", "libyaml", "libffi", "gmp"];
 
 const LIBLTDL_COMMON = `#define HAVE_INTTYPES_H 1
 #define HAVE_PRELOADED_SYMBOLS 1
@@ -136,11 +130,7 @@ export const LIBRARIES: Library[] = [
                 "errors += loader_init (get_vtable, 0);",
                 "errors += loader_init (get_vtable, 0);\nerrors += loader_init (loadlibrary_LTX_get_vtable, 0);",
             );
-            replaceInFile(
-                ltdl,
-                "errors += lt_dlpreload_open (LT_STR(LTDLOPEN), loader_init_callback);",
-                "",
-            );
+            replaceInFile(ltdl, "errors += lt_dlpreload_open (LT_STR(LTDLOPEN), loader_init_callback);", "");
         },
         build: async ({ isDebug, msvc, path }) => {
             const p = `${path}/libltdl`,
@@ -361,6 +351,9 @@ export const LIBRARIES: Library[] = [
             if (!isDebug && msvc) {
                 stripDllImport(`${root}/include/openjpeg-2.5/openjpeg.h`);
             }
+
+            // Upstream prefixes every private lib with -l, CMAKE_THREAD_LIBS_INIT ("-lpthread") included.
+            replaceInFile(`${root}/lib/pkgconfig/libopenjp2.pc`, "-l-lpthread", "-lpthread", { optional: true });
         },
     },
     {
@@ -368,6 +361,13 @@ export const LIBRARIES: Library[] = [
         source: { git: "https://github.com/aous72/OpenJPH", tag: "0.33.0" },
         msys2: "openjph",
         args: () => `-DOJPH_ENABLE_TIFF_SUPPORT=OFF -DOJPH_DISABLE_AVX512=ON -DOJPH_BUILD_EXECUTABLES=OFF`,
+        finish: async ({ root }) => {
+            addFindDependency(
+                `${root}/lib/cmake/openjph/openjph-config.cmake`,
+                'include("${CMAKE_CURRENT_LIST_DIR}/openjph-targets.cmake")',
+                ["Threads"],
+            );
+        },
     },
     {
         name: "imath",
@@ -430,9 +430,16 @@ export const LIBRARIES: Library[] = [
                 replaceInFile(`${path}/CMakeLists.txt`, "-Wa,-muse-unaligned-vector-move", "");
             }
         },
-        finish: async ({ isDebug, root }) => {
+        finish: async ({ isDebug, msvc, root }) => {
             if (!isDebug) {
                 stripDllImport(`${root}/include/kvazaar.h`);
+            }
+
+            // Upstream leaves Libs.private empty, but outside msvc the library links against Threads (pthread).
+            if (!msvc) {
+                replaceInFile(`${root}/lib/pkgconfig/kvazaar.pc`, /^Libs\.private:.*$/m, "Libs.private: -lpthread", {
+                    optional: true,
+                });
             }
         },
     },
@@ -532,6 +539,12 @@ export const LIBRARIES: Library[] = [
             if (!isDebug) {
                 stripDllImport(`${root}/include/libde265/de265.h`);
             }
+
+            addFindDependency(
+                `${root}/lib/cmake/libde265/libde265-config.cmake`,
+                "# Commands may need to know the format version.",
+                ["Threads"],
+            );
         },
     },
     {
@@ -593,6 +606,14 @@ export const LIBRARIES: Library[] = [
             if (msvc && !isDebug) {
                 await copyLib(root, "jpeg-static.lib", "jpeg.lib");
             }
+
+            // libjpeg-turbo hardcodes "spng", but libspng installs libspng.pc / libspng_static.pc.
+            replaceInFile(
+                `${root}/lib/pkgconfig/libturbojpeg.pc`,
+                "Requires.private: spng",
+                `Requires.private: ${isDebug ? "libspng" : "libspng_static"}`,
+                { optional: true },
+            );
         },
         prepare: async ({ path }) => {
             await applyPatch(path, "libjpeg-turbo-install.patch");
@@ -669,6 +690,20 @@ export const LIBRARIES: Library[] = [
             replaceInFile(`${root}/lib/pkgconfig/libraw.pc`, "-lstdc++", "");
             replaceInFile(`${root}/lib/pkgconfig/libraw_r.pc`, "-lstdc++", "");
 
+            // Upstream's Libs.private lacks zlib (--enable-zlib) and winsock (ntohs/htons).
+            if (!msvc) {
+                for (const name of ["libraw", "libraw_r"]) {
+                    replaceInFile(
+                        `${root}/lib/pkgconfig/${name}.pc`,
+                        /^(Libs\.private:(?!.* -lz\b).*)$/m,
+                        "$1 -lz -lws2_32",
+                        {
+                            optional: true,
+                        },
+                    );
+                }
+            }
+
             if (!isDebug) {
                 stripDllImport(`${root}/include/libraw/libraw_types.h`);
             }
@@ -705,10 +740,18 @@ export const LIBRARIES: Library[] = [
         msys2: "libtiff",
         args: ({ isDebug }) =>
             `-Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Dtiff-deprecated=OFF -Dtiff-static=${cmakeVal(!isDebug)} -Dlerc=OFF -Djbig=OFF -DTIFF_STATIC_LIBS_DEFAULT=${cmakeVal(!isDebug)}`,
+        finish: async ({ root }) => {
+            // The config template leaves its dependencies as a TODO.
+            addFindDependency(`${root}/lib/cmake/tiff/tiff-config.cmake`, "    # TODO: import dependencies", [
+                "ZLIB",
+                "JPEG",
+                "WebP CONFIG",
+            ]);
+        },
     },
     {
         name: "openexr",
-        source: { git: "https://github.com/AcademySoftwareFoundation/openexr", tag: "v3.5.4" },
+        source: { git: "https://github.com/AcademySoftwareFoundation/openexr", tag: "v3.5.5" },
         profile: { rtti: true },
         msys2: "openexr",
         args: () =>
@@ -760,7 +803,7 @@ export const LIBRARIES: Library[] = [
     },
     {
         name: "harfbuzz",
-        source: { git: "https://github.com/harfbuzz/harfbuzz", tag: "15.1.0" },
+        source: { git: "https://github.com/harfbuzz/harfbuzz", tag: "15.2.0" },
         build: "meson",
         msys2: "harfbuzz",
         args: () =>
@@ -785,6 +828,11 @@ export const LIBRARIES: Library[] = [
             if (!isDebug) {
                 stripDllImport(`${root}/include/jxl/jxl_export.h`);
             }
+
+            // jxl_cms uses highway without requiring it, so static links would put libhwy before it.
+            replaceInFile(`${root}/lib/pkgconfig/libjxl_cms.pc`, "Requires: lcms2", "Requires: lcms2 libhwy", {
+                optional: true,
+            });
         },
     },
     {
@@ -974,7 +1022,9 @@ export const LIBRARIES: Library[] = [
                     continue;
                 }
                 const args = `--disable-dependency-tracking --disable-legacy-support ${isDebug ? "--enable-assert" : "--disable-assert"} --enable-openmp --enable-opencl --with-threads --with-quantum-depth=${depth} --without-modules --without-utilities --disable-docs --${hdr}-hdri --disable-deprecated --without-perl --with-ltdl --with-bzlib --without-fftw --with-freetype --with-heic --without-jbig --with-jpeg --with-jxl --with-lcms --with-lzma --with-openexr --with-openjp2 --with-png --with-raw --with-tiff --with-webp --with-xml --with-zip --with-zlib --with-zstd --without-autotrace --without-djvu --without-dps --without-flif --without-fpx --without-fontconfig --without-gslib --without-gvc --without-dmr --without-lqr --without-pango --without-raqm --without-rsvg --with-uhdr --without-wmf --without-x --without-gdi32`;
-                const buildVariant = () => buildAutoconf(path, isDebug, root, { args });
+                // Static pkg-config, so the codecs' private dependencies (libdeflate, zstd, openjph, rav1e, ...) land in the link line.
+                const buildVariant = () =>
+                    buildAutoconf(path, isDebug, root, { args, env: 'PKG_CONFIG="pkg-config --static"' });
                 await step(`q${depth}-${hdr}-hdri`, async () => {
                     if (profiled || settings.libsPgo !== "use") {
                         await buildVariant();
@@ -986,6 +1036,20 @@ export const LIBRARIES: Library[] = [
         },
         finish: async ({ isDebug, msvc, path, root }) => {
             await $`rm -f ${root}/bin/MagickCore-config ${root}/bin/MagickWand-config ${root}/bin/Magick++-config`;
+
+            if (!msvc) {
+                // MagickCore's libtool archive gets these through LIBADD, which the pkg-config files don't carry.
+                for (const name of readdirSync(`${root}/lib/pkgconfig`).filter((file) =>
+                    /^(ImageMagick|Magick)/.test(file),
+                )) {
+                    replaceInFile(
+                        `${root}/lib/pkgconfig/${name}`,
+                        /^(Libs\.private:(?!.* -lurlmon\b).*)$/m,
+                        "$1 -lws2_32 -lurlmon",
+                        { optional: true },
+                    );
+                }
+            }
             if (isDebug && msvc) {
                 movePdbs(`${path}/MagickCore/.libs`, `${root}/bin`);
                 movePdbs(`${path}/MagickWand/.libs`, `${root}/bin`);
@@ -1039,7 +1103,7 @@ export const LIBRARIES: Library[] = [
         name: "upx",
         source: { git: "https://github.com/upx/upx", tag: "devel" },
         releaseOnly: true,
-        profile: { march: "znver1", mtune: "znver1", rtti: true },
+        profile: { fatLto: false, march: "znver1", mtune: "znver1", rtti: true },
         prepare: async ({ path }) => {
             await applyPatch(path, "upx-install.patch");
             await $`git submodule update --depth 1 --init --recursive`.cwd(path);
@@ -1049,6 +1113,10 @@ export const LIBRARIES: Library[] = [
     ruby("ruby-1.8.7", "https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.7-p374.tar.gz", "1.8.7-p374"),
     ruby("ruby-1.9.3", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p551.tar.gz", "1.9.3-p551"),
     ruby("ruby-1.9.2", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.2-p330.tar.gz", "1.9.2-p330"),
+    rubyX64("ruby-2.7.8", "https://cache.ruby-lang.org/pub/ruby/2.7/ruby-2.7.8.tar.gz", "2.7.8"),
+    rubyX64("ruby-3.3.14", "https://cache.ruby-lang.org/pub/ruby/3.3/ruby-3.3.14.tar.gz", "3.3.14"),
+    rubyX64("ruby-3.4.13", "https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.13.tar.gz", "3.4.13"),
+    rubyX64("ruby-4.0.10", "https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.10.tar.gz", "4.0.10"),
 
     llvmProject,
     llvmRuntimes,

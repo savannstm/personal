@@ -1,5 +1,7 @@
-import { replaceInFile } from "./builders.ts";
-import { buildRoot, ROOT, settings } from "./settings.ts";
+import $ from "dax";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { buildAutoconf, replaceInFile } from "./builders.ts";
+import { buildRoot, CLANG64, ROOT, settings } from "./settings.ts";
 import { bash, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
@@ -10,15 +12,160 @@ export function ruby(name: string, archive: string, version: string): Library {
         name,
         source: { archive, subdir: `ruby-${version}`, version },
         releaseOnly: true,
-        profile: { rtti: true },
+        profile: { fatLto: false, mtune: "znver1", rtti: true },
         build: ({ path }) => buildRuby(path, name),
     };
 }
 
+// An x86_64 Ruby (shared libruby; 3.x with every default extension, so gems, bundler, Rails and Jekyll work; 2.7 minimal: just
+// encodings, zlib and stringio), built with the repo's CLANG64 toolchain, unlike the i686 llvm-mingw rubies above.
+export function rubyX64(name: string, archive: string, version: string): Library {
+    const legacy = version.startsWith("2.");
+    return {
+        name,
+        source: { archive, subdir: `ruby-${version}`, version },
+        releaseOnly: true,
+        toolchains: ["clang"],
+        profile: { fatLto: false, mtune: "znver1", rtti: true },
+        prepare: async ({ path }) => {
+            // --no-llvm-bc makes llvm-nm skip LTO's bitcode objects, so mkexports.rb finds no symbols to export from libruby.
+            replaceInFile(`${path}/configure`, 'NM="$NM --no-llvm-bc"', ":", { optional: true });
+            if (legacy) {
+                await patchRuby27(path);
+            }
+        },
+        build: ({ path, root }) => buildRubyX64(path, `${root}/${name}`, legacy),
+        finish: ({ root }) => finishRubyX64(`${root}/${name}`, legacy),
+    };
+}
+
+// What the repo's flags break in Ruby: LTO (libruby fails to link on .refptr symbols), -static (lld then ignores the libruby import
+// library, so no extension links), hidden visibility (extensions' Init_ functions aren't exported), OpenMP (unused).
+const RUBY_DROPPED_FLAGS = new Set([
+    "-fopenmp",
+    "-fvisibility-inlines-hidden",
+    "-fvisibility=hidden",
+    "-static",
+    "-static-libgcc",
+    "-static-libstdc++",
+    "-static-openmp",
+]);
+const withoutDroppedFlags = (flags: string) =>
+    flags
+        .split(" ")
+        .filter((flag) => flag && !RUBY_DROPPED_FLAGS.has(flag))
+        .join(" ");
+
+async function buildRubyX64(path: string, prefix: string, legacy: boolean) {
+    // Ruby needs -fno-strict-aliasing; 2.7's C is too old for clang's stricter defaults.
+    const cflags = `${withoutDroppedFlags(process.env.CFLAGS!)} -fno-strict-aliasing${legacy ? " -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int" : ""}`,
+        ldflags = withoutDroppedFlags(process.env.LDFLAGS!);
+
+    // setjmp: configure picks __builtin_setjmp, which crashes every raise under clang on Windows. libwinpthread (static) is for
+    // clock_gettime. 2.7 detects the C runtime by the msvc*.dll its test program imports; UCRT has none, so say it's UCRT.
+    // 2.7 builds only zlib and stringio (encodings are built regardless), like the 1.x rubies, and no rubygems.
+    await buildAutoconf(path, false, prefix, {
+        args: `--build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 --disable-install-doc --disable-yjit --disable-zjit --with-baseruby=no --with-setjmp-type=setjmp${legacy ? " --with-ext=stringio,zlib --disable-rubygems" : ""} --with-opt-dir=${buildRoot(false)}`,
+        env: `RUBYOPT= LIBS=-l:libwinpthread.a${legacy ? " rb_cv_msvcrt=ucrt140" : ""} CFLAGS="${cflags}" LDFLAGS="${ldflags}"`,
+        jobs: "$(nproc)",
+        libs: false,
+        libtool: false,
+        linkage: "--enable-shared",
+        nativePrefix: true,
+    });
+}
+
+// 2.7 predates UCRT on MinGW and is written for MSVC's compiler and runtime: win32.c writes FILE::_file (opaque in UCRT; the
+// dup2 in open_null already does the job), defines clock_gettime/clock_getres (libwinpthread's headers declare them), declares a
+// static function in a block scope, and calls MSVC's debug-runtime functions (_CrtSetReportMode, _RTC_SetErrorFunc). Its
+// GNUmakefile also hands llvm-windres a preprocessor option, which it rejects (newer Ruby knows), and its mkexports.rb can't read
+// llvm-objdump's output (the DLL would export 7 symbols); 3.3's can, so patches/ruby/mkexports-3.3.rb replaces it.
+async function patchRuby27(path: string) {
+    replaceInFile(
+        `${path}/cygwin/GNUmakefile.in`,
+        '@WINDRES@ --preprocessor="$(CPP) -xc" -DRC_INVOKED',
+        "@WINDRES@ -DRC_INVOKED",
+    );
+    copyFileSync(`${ROOT}/patches/ruby/mkexports-3.3.rb`, `${path}/win32/mkexports.rb`);
+    const file = `${path}/win32/win32.c`;
+    replaceInFile(file, /FILE_FILENO\((std[a-z]+)\) = (open_null\(\d\));/g, "$2;");
+    replaceInFile(file, /^clock_(gettime|getres)\(clockid_t/gm, "rb_unused_clock_$1(clockid_t");
+    replaceInFile(
+        file,
+        "    static void set_pioinfo_extra(void);\n\n    _CrtSetReportMode(_CRT_ASSERT, 0);\n    _set_invalid_parameter_handler(invalid_parameter);\n    _RTC_SetErrorFunc(rtc_error_handler);\n",
+        "    _set_invalid_parameter_handler(invalid_parameter);\n",
+    );
+    replaceInFile(
+        file,
+        "static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);\n",
+        "static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);\nstatic void set_pioinfo_extra(void);\n",
+    );
+}
+
+// The installed Ruby is what users build gems with, so rbconfig must not carry this build's paths (resource dir, prefix libraries,
+// sccache) and the dependency DLLs ship next to it.
+async function finishRubyX64(prefix: string, legacy: boolean) {
+    // This build's paths: the prefix (resource dir, libc++ headers, libraries) and CLANG64's clang headers.
+    const escape = (path: string) => path.replaceAll(/[.*+?^${}()|[\]\\/]/g, String.raw`\$&`),
+        ownPaths = `(?:${escape(buildRoot(false))}|${escape(CLANG64)}/lib/clang)`,
+        ownFlags = new RegExp(
+            String.raw`( ?-resource-dir [^\s"']+| ?-isystem ${ownPaths}[^\s"']*| ?-L${ownPaths}[^\s"']*| ?-nostdinc\+\+| ?-lc\+\+abi| ?-lunwind| ?-lclang_rt\.[^\s"']+)`,
+            "g",
+        );
+    const rbconfigs = readdirSync(prefix, { recursive: true, encoding: "utf8" }).filter((file) =>
+        file.endsWith("rbconfig.rb"),
+    );
+    for (const rbconfig of rbconfigs) {
+        const file = `${prefix}/${rbconfig}`;
+        writeFileSync(
+            file,
+            readFileSync(file, "utf8")
+                .replace(
+                    ownFlags,
+                    "",
+                )
+                .replaceAll("sccache ", ""),
+        );
+    }
+
+    // Dependencies (OpenSSL, libyaml, GMP, libffi, ...) come from CLANG64 as DLLs; copy them transitively.
+    const bin = `${prefix}/bin`,
+        queue = readdirSync(prefix, { recursive: true, encoding: "utf8" })
+            .filter((file) => /\.(dll|so|exe)$/.test(file))
+            .map((file) => `${prefix}/${file}`);
+    for (const file of queue) {
+        for (const [, dll] of (await $`llvm-objdump -p ${file}`.text()).matchAll(/DLL Name: (\S+)/g)) {
+            const source = `${CLANG64}/bin/${dll}`;
+            if (existsSync(source) && !existsSync(`${bin}/${dll}`)) {
+                copyFileSync(source, `${bin}/${dll}`);
+                queue.push(`${bin}/${dll}`);
+            }
+        }
+    }
+
+    // Only the install itself on PATH: anything missing above fails here instead of on the user's machine.
+    await $`${bin}/ruby.exe -e ${legacy ? RUBY_SMOKE_TEST_27 : RUBY_SMOKE_TEST}`.env({ PATH: `${bin};C:/Windows/System32`, RUBYOPT: "" });
+}
+
+// 2.7 is minimal: basic Ruby, every encoding (and transcoder), zlib and stringio.
+const RUBY_SMOKE_TEST_27 = `
+    Encoding.name_list.each { |name| Encoding.find(name) }
+    require "zlib"
+    require "stringio"
+    abort "broken" unless "é".encode("Shift_JIS", undef: :replace).encode("UTF-8") && Zlib.crc32("a") == 0xe8b7be43 && StringIO.new("a").read == "a"
+`;
+
+const RUBY_SMOKE_TEST = `
+    missing = %w[bigdecimal date digest etc fcntl io/console json monitor objspace open3 openssl psych ripper securerandom socket stringio strscan zlib].reject { |lib|
+        begin; require lib; true; rescue LoadError => e; warn "#{lib}: #{e.message}"; false; end
+    }
+    abort "missing: #{missing.join(", ")}" unless missing.empty? && Encoding::UTF_8 && Psych.load("a: 1") == { "a" => 1 }
+`;
+
 async function buildRuby(p: string, name: string) {
     const legacy = name.startsWith("ruby-1.8"),
         triple = "i686-w64-mingw32",
-        x64Flag = /^(-march=|-mtune=|--target=|-fopenmp|-static-openmp|-l|-L)/,
+        x64Flag = /^(-march=|--target=|-fopenmp|-static-openmp|-l|-L)/,
         keep = (flags: string) =>
             flags
                 .split(" ")

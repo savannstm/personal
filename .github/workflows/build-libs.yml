@@ -105,7 +105,7 @@ jobs:
     # Clang's IR profile: compiling Sema.cpp. Needs no libraries. Repos go to C:, the workspace drive only has ~14 GB free.
     pgo-clang:
         name: PGO clang
-        needs: pgo-keys
+        needs: [pgo-keys, llvm-runtimes]
         if: ${{ needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-clang-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
         env:
@@ -114,6 +114,13 @@ jobs:
             - uses: actions/checkout@v7
 
             - uses: ./.github/actions/build-libs-setup
+
+            # The runtimes (compiler-rt, libc++, libc++abi, libunwind, libomp) the llvm-runtimes job built, unpacked over the prefix:
+            # the build uses them and their headers instead of CLANG64's.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
 
             - name: Train
               shell: pwsh
@@ -130,7 +137,7 @@ jobs:
     # library pipeline either way).
     pgo-libs:
         name: PGO libraries
-        needs: pgo-keys
+        needs: [pgo-keys, llvm-runtimes]
         if: ${{ needs.pgo-keys.outputs.libs-hit != 'true' || (needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project'))) }}
         runs-on: windows-2025
         env:
@@ -160,6 +167,13 @@ jobs:
                       dev/build-libs/build-state.json
                   key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
 
+            # The runtimes (compiler-rt, libc++, libc++abi, libunwind, libomp) the llvm-runtimes job built, unpacked over the prefix:
+            # the build uses them and their headers instead of CLANG64's.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
+
             - name: Train
               shell: pwsh
               run: node dev/build-libs/index.ts --repos C:/repos --pgo libs --pgo-train --magick-variants q16hdri
@@ -184,7 +198,7 @@ jobs:
     # the libraries are rebuilt from the cached library profile.
     pgo-lld:
         name: PGO lld
-        needs: [pgo-keys, pgo-libs]
+        needs: [pgo-keys, pgo-libs, llvm-runtimes]
         if: ${{ !failure() && !cancelled() && needs.pgo-keys.outputs.llvm-hit != 'true' && needs.pgo-keys.outputs.ir-lld-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
         env:
@@ -208,6 +222,13 @@ jobs:
                       dev/build-libs/build-state.json
                   key: pgo-libs-prefix-${{ needs.pgo-keys.outputs.libs }}
 
+            # The runtimes (compiler-rt, libc++, libc++abi, libunwind, libomp) the llvm-runtimes job built, unpacked over the prefix:
+            # the build uses them and their headers instead of CLANG64's.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
+
             - name: Train
               shell: pwsh
               run: node dev/build-libs/index.ts --repos C:/repos --pgo lld,libs --pgo-train --pgo-ir-only --magick-variants q16hdri --only llvm-project
@@ -222,7 +243,7 @@ jobs:
     # profiles, trained on both workloads.
     pgo-llvm:
         name: PGO LLVM
-        needs: [pgo-keys, pgo-libs, pgo-clang, pgo-lld]
+        needs: [pgo-keys, pgo-libs, pgo-clang, pgo-lld, llvm-runtimes]
         if: ${{ !failure() && !cancelled() && needs.pgo-keys.outputs.llvm-hit != 'true' && (inputs.only == '' || contains(inputs.only, 'llvm-project')) }}
         runs-on: windows-2025
         env:
@@ -257,6 +278,13 @@ jobs:
               with:
                   path: dev/build-libs/pgo/profiles/${{ needs.pgo-keys.outputs.ir-lld }}
                   key: pgo-${{ needs.pgo-keys.outputs.ir-lld }}
+
+            # The runtimes (compiler-rt, libc++, libc++abi, libunwind, libomp) the llvm-runtimes job built, unpacked over the prefix:
+            # the build uses them and their headers instead of CLANG64's.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
 
             - name: Train
               shell: pwsh
@@ -324,6 +352,7 @@ jobs:
               with:
                   name: llvm-bin-${{ github.run_number }}
                   path: C:/dev-clang
+                  include-hidden-files: true
                   compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn
@@ -332,8 +361,7 @@ jobs:
     # same C:/dev-clang layout as the llvm job; unpack both artifacts into one directory.
     llvm-runtimes:
         name: LLVM runtimes
-        # Also runs for an llvm-project run, which needs these runtimes.
-        if: ${{ inputs.only == '' || contains(inputs.only, 'llvm-runtimes') || contains(inputs.only, 'llvm-project') }}
+        # Always runs: every other job builds against these runtimes.
         runs-on: windows-2025
         steps:
             - uses: actions/checkout@v7
@@ -370,15 +398,16 @@ jobs:
               with:
                   name: llvm-rt-${{ github.run_number }}
                   path: C:/dev-clang
+                  include-hidden-files: true
                   compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn
 
     # Runs parallel to the llvm jobs. Its C:/dev-clang holds only libraries, never the clang the llvm jobs build, so they are
-    # compiled with CLANG64's clang (ownClang is set by the presence of C:/dev-clang/release/bin/clang.exe).
+    # compiled with CLANG64's clang (ownClang is set by the presence of C:/dev-clang/release/bin/clang.exe) against the llvm-runtimes install.
     libs:
         name: Libraries
-        needs: [pgo-keys, pgo-libs]
+        needs: [pgo-keys, pgo-libs, llvm-runtimes]
         # An llvm-runtimes-only run has no libraries to build; without this the job still trains the PGO chain and builds llvm-runtimes.
         if: ${{ !failure() && !cancelled() && (inputs.only == '' || !contains(inputs.only, 'llvm-runtimes')) }}
         runs-on: windows-2025
@@ -409,6 +438,13 @@ jobs:
                   fail-on-cache-miss: true
 
 
+            # The runtimes (compiler-rt, libc++, libc++abi, libunwind, libomp) the llvm-runtimes job built, unpacked over the prefix:
+            # the build uses them and their headers instead of CLANG64's.
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
+
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,
             # rust-src and the gnullvm target. The config's build dir is a path on the author's machine.
             - name: Rust
@@ -428,7 +464,7 @@ jobs:
             - name: Build
               shell: pwsh
               run: |
-                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,llvm-runtimes,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3')
+                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,llvm-runtimes,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3,ruby-2.7.8,ruby-3.3.14,ruby-3.4.13,ruby-4.0.10')
                   if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
                   node dev/build-libs/index.ts @buildArgs
 
@@ -445,6 +481,72 @@ jobs:
               with:
                   name: libs-${{ github.run_number }}
                   path: C:/dev-clang
+                  include-hidden-files: true
                   compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn
+
+    # Every Ruby, one runner each. The 1.x ones are i686 builds with llvm-mingw (msvcrt); the others are full x86_64 builds with
+    # CLANG64 against the llvm-runtimes install: shared libruby, every extension, the dependency DLLs next to ruby.exe.
+    ruby:
+        name: ${{ matrix.ruby }}
+        needs: llvm-runtimes
+        if: ${{ !failure() && !cancelled() && (inputs.only == '' || contains(inputs.only, 'ruby')) }}
+        runs-on: windows-2025
+        strategy:
+            fail-fast: false
+            matrix:
+                ruby:
+                    - ruby-1.8.1
+                    - ruby-1.8.7
+                    - ruby-1.9.2
+                    - ruby-1.9.3
+                    - ruby-2.7.8
+                    - ruby-3.3.14
+                    - ruby-3.4.13
+                    - ruby-4.0.10
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
+            # ruby.ts expects the toolchain at C:/PATH/llvm-mingw-msvcrt-i686.
+            - name: llvm-mingw (i686, msvcrt)
+              if: ${{ startsWith(matrix.ruby, 'ruby-1.') }}
+              shell: pwsh
+              run: |
+                  $zip = "$env:RUNNER_TEMP/llvm-mingw.zip"
+                  Invoke-WebRequest https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/llvm-mingw-20261117-msvcrt-i686.zip -OutFile $zip
+                  New-Item -ItemType Directory -Force C:/PATH | Out-Null
+                  Expand-Archive $zip C:/PATH
+                  Rename-Item C:/PATH/llvm-mingw-20261117-msvcrt-i686 llvm-mingw-msvcrt-i686
+
+            - uses: actions/download-artifact@v8
+              with:
+                  name: llvm-rt-${{ github.run_number }}
+                  path: C:/dev-clang
+
+            # Repos go to C:, the workspace drive only has ~14 GB free.
+            - name: Build
+              shell: pwsh
+              run: node dev/build-libs/index.ts --repos C:/repos --pgo off --only-release --only ${{ matrix.ruby }}
+
+            # Only the install on PATH, like on a user's machine.
+            - name: Gems
+              if: ${{ !startsWith(matrix.ruby, 'ruby-1.') }}
+              shell: pwsh
+              run: |
+                  $env:PATH = "C:/dev-clang/release/${{ matrix.ruby }}/bin;C:/Windows/System32;C:/Windows"
+                  ruby -v
+                  ruby -S gem install rake nokogiri --no-document
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  ruby -rnokogiri -e 'puts Nokogiri::VERSION'
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: ${{ matrix.ruby }}-${{ github.run_number }}
+                  path: C:/dev-clang/release/${{ matrix.ruby }}
+                  include-hidden-files: true
+                  compression-level: 9
+                  retention-days: 14
+                  if-no-files-found: error

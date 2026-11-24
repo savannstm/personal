@@ -14,7 +14,7 @@ export interface ToolchainProfile {
     lto?: boolean;
     ownLibcxx?: boolean; // true: builds libc++ itself, so no libc++ include directory is added
     ownClang?: boolean; // false: built with MSYS2's clang even once our clang exists (llvm-project bootstraps from it)
-    ownRuntimes?: boolean; // true: libc++, libc++abi, libunwind and libomp come from llvm-runtimes' install, once it exists
+    ownRuntimes?: boolean; // false: not built with llvm-runtimes' install (libc++, libunwind, libomp, compiler-rt) even once it exists
 }
 
 export interface Ctx {

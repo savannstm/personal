@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter } from "node:path";
 
 import { FFMPEG_VARIANTS } from "./ffmpeg.ts";
+import { latestVersionDir } from "./msvc.ts";
 import { buildDir, buildRoot, CLANG64, settings, TOOLCHAINS_DIR } from "./settings.ts";
 import { bash } from "./shell.ts";
 import type { BuildConfig, Conf, Library, Shared, Toolchain, ToolchainProfile, Tools } from "./types.ts";
@@ -11,6 +12,19 @@ const INJECT_TARGETS = `${TOOLCHAINS_DIR}/inject-targets.cmake`,
     SEP = delimiter;
 
 export const CLANG_WIN_TARGET = "x86_64-w64-windows-gnu";
+
+// The llvm-runtimes install under a prefix (per-target runtime dirs): libc++ (libc++abi merged in), libunwind, libomp, and
+// compiler-rt with its headers in the resource directory. Null while it isn't installed there.
+export function installedRuntimes(root: string) {
+    if (!existsSync(`${root}/lib/${CLANG_WIN_TARGET}/libc++.a`)) {
+        return null;
+    }
+    return {
+        cxxIncludes: [`${root}/include/${CLANG_WIN_TARGET}/c++/v1`, `${root}/include/c++/v1`],
+        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`],
+        resourceDir: `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`,
+    };
+}
 
 const C_STD = "17",
     CXX_STD = "23",
@@ -31,6 +45,8 @@ export const CONSUMER_PROFILE: ToolchainProfile = {
     consumer: true,
     debugOpt: false,
     linkLibsProfile: true,
+    // The consumer's own clang brings its runtimes; the prefix only holds the libraries.
+    ownRuntimes: false,
     rtti: true,
 };
 
@@ -60,10 +76,10 @@ export async function computeFlags(isDebug: boolean) {
 
     let libcxx = "";
     if (flags.toolchain !== "msvc" && !flags.ownLibcxx) {
-        libcxx =
-            flags.ownClang || flags.ownRuntimes
-                ? `-nostdinc++ -isystem ${buildRoot(false)}/include/c++/v1`
-                : `-isystem ${CLANG64}/include/c++/v1`;
+        const runtimes = flags.ownClang || flags.ownRuntimes ? installedRuntimes(buildRoot(false)) : null;
+        libcxx = runtimes
+            ? `-nostdinc++ ${runtimes.cxxIncludes.map((dir) => `-isystem ${dir}`).join(" ")}`
+            : `-isystem ${CLANG64}/include/c++/v1`;
     }
 
     const cFlags = `-std=gnu17 ${opt}`,
@@ -166,7 +182,9 @@ function genToolchains(profile: ToolchainProfile): Conf {
     const { toolchain } = settings,
         // The PGO library chain always uses CLANG64's clang: the profile is trained with it.
         ownClang = profile.ownClang !== false && settings.libsPgo === null && existsSync(`${buildRoot(false)}/bin/clang.exe`),
-        ownRuntimes = profile.ownRuntimes === true && existsSync(`${buildRoot(false)}/lib/libc++.a`),
+        // Every build uses the llvm-runtimes install once it is in the prefix (CI downloads it first), not CLANG64's runtimes.
+        ownRuntimes =
+            toolchain !== "msvc" && profile.ownRuntimes !== false && installedRuntimes(buildRoot(false)) !== null,
         shared = buildShared(toolchain, profile, ownClang, ownRuntimes),
         debug = buildDebug(shared, profile),
         release = buildRelease(shared, profile),
@@ -410,7 +428,7 @@ function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
 function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: boolean, ownRuntimes: boolean): Shared {
     const march = marchFlags(profile),
         userClang = profile.consumer === true && toolchain === "clang",
-        builtins = ownClang || userClang ? [] : ["-lclang_rt.builtins-x86_64"],
+        builtins = ownClang || userClang ? [] : [ownRuntimes ? "-lclang_rt.builtins" : "-lclang_rt.builtins-x86_64"],
         // Link-only: in cflags, meson's compile-only probes reject it under the PGO path's -Wno-everything.
         cflags = ["-pipe", ...march, "-w", "-fopenmp"],
         ldflags = [...march, "-fopenmp", ...builtins];
@@ -429,8 +447,19 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
     }
 
     if (ownRuntimes) {
-        ldflags.push(`-L${buildRoot(false)}/lib`);
-        ldflags.push("-lc++abi", "-lunwind");
+        const runtimes = installedRuntimes(buildRoot(false))!;
+        if (!ownClang) {
+            // CLANG64's clang takes compiler-rt (libraries and headers) from the install through its resource dir. Its own
+            // builtin headers are tied to the clang version, so they stay, searched after compiler-rt's.
+            const clangHeaders = `${CLANG64}/lib/clang/${latestVersionDir(`${CLANG64}/lib/clang`)}/include`;
+            cflags.push(
+                `-resource-dir ${runtimes.resourceDir}`,
+                `-isystem ${runtimes.resourceDir}/include`,
+                `-isystem ${clangHeaders}`,
+            );
+            ldflags.push(`-resource-dir ${runtimes.resourceDir}`);
+        }
+        ldflags.push(...runtimes.libDirs.map((dir) => `-L${dir}`), "-lc++abi", "-lunwind");
     }
 
     ldflags.push("-rtlib=compiler-rt", "--unwindlib=libunwind");

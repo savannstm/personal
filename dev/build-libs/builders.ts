@@ -46,6 +46,12 @@ export function stripDllImport(file: string): void {
     replaceInFile(file, "__declspec(dllimport)", "", { optional: true });
 }
 
+// For the installed CMake configs that use imported targets of other packages without finding them first.
+export function addFindDependency(file: string, anchor: string, packages: string[]): void {
+    const calls = packages.map((pkg) => `find_dependency(${pkg})`).join("\n");
+    replaceInFile(file, anchor, `include(CMakeFindDependencyMacro)\n${calls}\n${anchor}`, { optional: true });
+}
+
 export async function applyPatch(path: string, patch: string): Promise<void> {
     const file = `${ROOT}/patches/${patch}`;
     if ((await $`git apply --check -R ${file}`.cwd(path).quiet().noThrow()).code === 0) {
@@ -149,7 +155,10 @@ interface AutoconfOptions {
     env?: string;
     libtool?: boolean;
     libs?: boolean;
+    linkage?: string; // replaces the build type's --enable/--disable-shared/static options
+    nativePrefix?: boolean; // the prefix as a Windows path, for configure scripts whose result native programs read (Ruby)
     makeEnv?: string;
+    jobs?: string;
 }
 
 export async function buildAutoconf(
@@ -162,23 +171,28 @@ export async function buildAutoconf(
         env = "",
         libs: passLibs = true,
         libtool = true,
+        linkage,
+        nativePrefix = false,
         makeEnv = "",
+        jobs = "2",
     }: AutoconfOptions = {},
 ) {
     const msysPath = toMsysPath(path),
-        { toolchain, tools } = toolchainState();
+        { ownClang, ownRuntimes, toolchain, tools } = toolchainState();
     const configurePath = `${path}/configure`;
     let libs = "-ladvapi32 -luser32";
 
     if (toolchain !== "msvc") {
-        libs += " -lclang_rt.builtins-x86_64";
+        // llvm-runtimes' compiler-rt installs per target, without the suffix of CLANG64's.
+        const suffix = ownClang || ownRuntimes ? "" : "-x86_64";
+        libs += ` -lclang_rt.builtins${suffix}`;
         if (process.env.CFLAGS!.includes("-fsanitize=address")) {
-            libs += " -lclang_rt.asan_dynamic-x86_64 -lclang_rt.asan_dynamic_runtime_thunk-x86_64";
+            libs += ` -lclang_rt.asan_dynamic${suffix} -lclang_rt.asan_dynamic_runtime_thunk${suffix}`;
         }
         libs += " -lole32 -lcfgmgr32";
     }
 
-    const buildType = isDebug ? "--enable-shared --disable-static" : "--disable-shared --enable-static";
+    const buildType = linkage ?? (isDebug ? "--enable-shared --disable-static" : "--disable-shared --enable-static");
     const libtoolFlags = libtool
         ? '--disable-dependency-tracking --with-gnu-ld --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 lt_cv_deplibs_check_method="pass_all" lt_cv_prog_gnu_ld=yes'
         : "";
@@ -193,7 +207,7 @@ export async function buildAutoconf(
 
     await bash`cd ${msysPath} && make distclean`.noThrow();
 
-    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}" CXX="sccache ${tools.cxx}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${toMsysPath(prefix)} ${libtoolFlags}`;
+    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}" CXX="sccache ${tools.cxx}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${nativePrefix ? prefix : toMsysPath(prefix)} ${libtoolFlags}`;
 
     if (libtool) {
         const libtoolPath = `${path}/libtool`;
@@ -206,7 +220,7 @@ export async function buildAutoconf(
         }
     }
 
-    await bash`cd ${msysPath} && ${env} ${makeEnv} make -j2 && make install`;
+    await bash`cd ${msysPath} && ${env} ${makeEnv} make -j${jobs} && make install`;
 }
 
 export async function buildPlain(

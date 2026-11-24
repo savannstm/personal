@@ -398,7 +398,7 @@ export async function resolvePgoProfiles() {
         version = /version (\S+)/.exec(await $`${clang} --version`.noThrow().quiet().text())?.[1] ?? "unknown",
         describe = (library: Library) => `${library.name}@${getPin(library)}`;
 
-    // The profile is trained with CLANG64's clang and libc++ headers, but consumed by our own LLVM's clang and runtimes.
+    // The profile is trained with CLANG64's clang and our runtimes (llvm-runtimes), and consumed by our own LLVM's clang.
     if (version.split(".")[0] !== LLVM_MAJOR) {
         consola.warn(
             pc.yellow(`CLANG64's clang is ${version}, LLVM is pinned to ${LLVM_MAJOR}: profiles may only partly apply.`),

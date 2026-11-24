@@ -1,6 +1,6 @@
 import consola from "consola";
 import $ from "dax";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
 import { buildCMake, buildMeson, buildRust } from "./builders.ts";
@@ -67,6 +67,7 @@ export async function buildRepos() {
     }
 
     await stripLibmFromMsvcPkgconfig();
+    stripBakedLinkFlags();
     configureToolchain(CONSUMER_PROFILE);
 }
 
@@ -76,6 +77,32 @@ async function stripLibmFromMsvcPkgconfig() {
     }
     for (const root of [buildRoot(true), buildRoot(false)]) {
         await $`sd -- ${String.raw`-lm\b`} "" $(rg -l -- "-lm" ${`${root}/lib/pkgconfig`})`.noThrow().timeout(1000);
+    }
+}
+
+// Autoconf libs bake in their build-time link flags: the compiler-rt libs (named per clang: CLANG64's carry an -x86_64 suffix)
+// and the NVIDIA directories hardcoded by ImageMagick's OpenCL probe. Consumers link their own runtimes.
+function stripBakedLinkFlags() {
+    if (settings.toolchain === "msvc") {
+        return;
+    }
+    for (const root of [buildRoot(true), buildRoot(false)]) {
+        for (const dir of [`${root}/lib/pkgconfig`, `${root}/lib`]) {
+            if (!existsSync(dir)) {
+                continue;
+            }
+            for (const name of readdirSync(dir)) {
+                if (!name.endsWith(".pc") && !name.endsWith(".la")) {
+                    continue;
+                }
+                const file = `${dir}/${name}`,
+                    text = readFileSync(file, "utf8"),
+                    stripped = text.replace(/ ?-lclang_rt\.[\w.-]+| ?-L\/usr\/lib(?:64)?\/nvidia\b/g, "");
+                if (stripped !== text) {
+                    writeFileSync(file, stripped);
+                }
+            }
+        }
     }
 }
 
