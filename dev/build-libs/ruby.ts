@@ -40,9 +40,9 @@ export const RUBY_DEPENDENCIES: Library[] = [
     {
         name: "libffi",
         source: {
-            archive: "https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz",
-            subdir: "libffi-3.5.2",
-            version: "3.5.2",
+            archive: "https://github.com/libffi/libffi/releases/download/v3.8.1/libffi-3.8.1.tar.gz",
+            subdir: "libffi-3.8.1",
+            version: "3.8.1",
         },
         releaseOnly: true,
         toolchains: ["clang"],
@@ -57,7 +57,7 @@ export const RUBY_DEPENDENCIES: Library[] = [
     },
     {
         name: "openssl",
-        source: { git: "https://github.com/openssl/openssl", tag: "openssl-3.5.9" },
+        source: { git: "https://github.com/openssl/openssl", tag: "openssl-3.6.5" },
         releaseOnly: true,
         toolchains: ["clang"],
         profile: RUBY_DEP_PROFILE,
@@ -193,15 +193,7 @@ async function finishRubyX64(prefix: string, legacy: boolean) {
     );
     for (const rbconfig of rbconfigs) {
         const file = `${prefix}/${rbconfig}`;
-        writeFileSync(
-            file,
-            readFileSync(file, "utf8")
-                .replace(
-                    ownFlags,
-                    "",
-                )
-                .replaceAll("sccache ", ""),
-        );
+        writeFileSync(file, readFileSync(file, "utf8").replace(ownFlags, "").replaceAll("sccache ", ""));
     }
 
     // 3.x links OpenSSL, libyaml, GMP and libffi statically; whatever DLLs still come from CLANG64 are copied transitively.
@@ -220,7 +212,10 @@ async function finishRubyX64(prefix: string, legacy: boolean) {
     }
 
     // Only the install itself on PATH: anything missing above fails here instead of on the user's machine.
-    await $`${bin}/ruby.exe -e ${legacy ? RUBY_SMOKE_TEST_27 : RUBY_SMOKE_TEST}`.env({ PATH: `${bin};C:/Windows/System32`, RUBYOPT: "" });
+    await $`${bin}/ruby.exe -e ${legacy ? RUBY_SMOKE_TEST_27 : RUBY_SMOKE_TEST}`.env({
+        PATH: `${bin};C:/Windows/System32`,
+        RUBYOPT: "",
+    });
 }
 
 // 2.7 is minimal: basic Ruby, every encoding (and transcoder), zlib and stringio.

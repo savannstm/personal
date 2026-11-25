@@ -99,7 +99,7 @@ export const LIBRARIES: Library[] = [
 
     {
         name: "mimalloc",
-        source: { git: "https://github.com/microsoft/mimalloc", tag: "v3.7.0" },
+        source: { git: "https://github.com/microsoft/mimalloc", tag: "v3.7.1" },
         releaseOnly: true,
         msys2: "mimalloc",
         args: ({ isDebug }) =>
@@ -225,7 +225,7 @@ export const LIBRARIES: Library[] = [
     },
     {
         name: "zstd",
-        source: { git: "https://github.com/facebook/zstd", tag: "v1.5.7" },
+        source: { git: "https://github.com/facebook/zstd", tag: "v1.6.0" },
         sourceSubdir: "build/cmake",
         msys2: "zstd",
         args: ({ isDebug }) =>
@@ -292,7 +292,7 @@ export const LIBRARIES: Library[] = [
 
     {
         name: "md4c",
-        source: { git: "https://github.com/mity/md4c", tag: "release-0.5.3" },
+        source: { git: "https://github.com/mity/md4c", tag: "release-0.6.0" },
         profile: { debugOpt: false },
         args: () => "-DBUILD_MD2HTML_EXECUTABLE=OFF",
     },
@@ -1065,7 +1065,7 @@ export const LIBRARIES: Library[] = [
     },
     {
         name: "qt5",
-        source: { git: "https://github.com/qt/qt5", tag: "v6.12.0" },
+        source: { git: "https://github.com/qt/qt5", tag: "v6.12.1" },
         archPkg: "qt6-base",
         profile: { asan: true, debugOpt: false, rtti: true },
         build: async ({ isDebug, msvc, path }) => {
@@ -1110,7 +1110,7 @@ export const LIBRARIES: Library[] = [
         },
     },
     ...RUBY_DEPENDENCIES,
-    ruby("ruby-1.8.1","https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.1.tar.gz", "1.8.1"),
+    ruby("ruby-1.8.1", "https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.1.tar.gz", "1.8.1"),
     ruby("ruby-1.8.7", "https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.7-p374.tar.gz", "1.8.7-p374"),
     ruby("ruby-1.9.3", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p551.tar.gz", "1.9.3-p551"),
     ruby("ruby-1.9.2", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.2-p330.tar.gz", "1.9.2-p330"),
