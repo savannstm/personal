@@ -1,11 +1,76 @@
 import $ from "dax";
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { buildAutoconf, replaceInFile } from "./builders.ts";
+import { buildAutoconf, replaceInFile, stripDllImport } from "./builders.ts";
 import { buildRoot, CLANG64, ROOT, settings } from "./settings.ts";
 import { bash, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
 
 export const LLVM_MINGW_I686 = "C:/PATH/llvm-mingw-msvcrt-i686";
+
+// What the x86_64 Rubies' libruby and extensions (gmp, openssl, psych, fiddle) link statically: release-only static libraries from the
+// repo's flags (-O3 -flto=full, no fat objects: the extensions link with LTO as well), instead of CLANG64's DLLs.
+const RUBY_DEP_PROFILE = { fatLto: false, mtune: "znver1" } as const;
+
+export const RUBY_DEPENDENCIES: Library[] = [
+    {
+        name: "gmp",
+        source: { archive: "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", subdir: "gmp-6.3.0", version: "6.3.0" },
+        releaseOnly: true,
+        toolchains: ["clang"],
+        profile: RUBY_DEP_PROFILE,
+        build: async ({ isDebug, path, root }) => {
+            await buildAutoconf(path, isDebug, root, {
+                // The probe's COMDAT section (.rdata$foo,...,one_only,foo) makes clang's assembler require a symbol foo, which the objects don't define.
+                env: "ABI=64 gmp_cv_asm_rodata='.section .rdata,\"dr\"'",
+            });
+        },
+    },
+    {
+        name: "libyaml",
+        source: { git: "https://github.com/yaml/libyaml", tag: "0.2.7" },
+        releaseOnly: true,
+        toolchains: ["clang"],
+        profile: RUBY_DEP_PROFILE,
+        args: () => "-DBUILD_TESTING=OFF",
+        finish: async ({ root }) => {
+            // Static library: yaml.h would import its functions from a DLL.
+            stripDllImport(`${root}/include/yaml.h`);
+        },
+    },
+    {
+        name: "libffi",
+        source: {
+            archive: "https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz",
+            subdir: "libffi-3.5.2",
+            version: "3.5.2",
+        },
+        releaseOnly: true,
+        toolchains: ["clang"],
+        profile: RUBY_DEP_PROFILE,
+        build: async ({ isDebug, path, root }) => {
+            // libtool: false with its options by hand: libffi's libtool is generated in a subdirectory, out of reach of the patch (a static library never needs it).
+            await buildAutoconf(path, isDebug, root, {
+                args: "--disable-docs --disable-multi-os-directory --disable-dependency-tracking --with-gnu-ld --build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 lt_cv_deplibs_check_method=pass_all lt_cv_prog_gnu_ld=yes",
+                libtool: false,
+            });
+        },
+    },
+    {
+        name: "openssl",
+        source: { git: "https://github.com/openssl/openssl", tag: "openssl-3.5.9" },
+        releaseOnly: true,
+        toolchains: ["clang"],
+        profile: RUBY_DEP_PROFILE,
+        build: async ({ path, root }) => {
+            // Not buildAutoconf: Configure is a Perl script. The libraries only (no apps, docs or tests); CC, CFLAGS, AR and RC come from the env.
+            await bash`cd ${toMsysPath(path)} && perl Configure mingw64 no-shared no-tests no-docs --prefix=${root} --libdir=lib --openssldir=${root}/ssl && make -j$(nproc) build_libs && make install_dev`;
+        },
+        finish: async ({ root }) => {
+            // Ruby's openssl extension takes pkg-config's word for the libraries and never probes for the static ones' Windows dependencies.
+            replaceInFile(`${root}/lib/pkgconfig/libcrypto.pc`, /^Libs: .*$/m, "$& -lws2_32 -lgdi32 -lcrypt32");
+        },
+    },
+];
 
 export function ruby(name: string, archive: string, version: string): Library {
     return {
@@ -131,7 +196,7 @@ async function finishRubyX64(prefix: string, legacy: boolean) {
         );
     }
 
-    // Dependencies (OpenSSL, libyaml, GMP, libffi, ...) come from CLANG64 as DLLs; copy them transitively.
+    // 3.x links OpenSSL, libyaml, GMP and libffi statically; whatever DLLs still come from CLANG64 are copied transitively.
     const bin = `${prefix}/bin`,
         queue = readdirSync(prefix, { recursive: true, encoding: "utf8" })
             .filter((file) => /\.(dll|so|exe)$/.test(file))

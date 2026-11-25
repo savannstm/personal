@@ -238,7 +238,11 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
     const csNameDir = `${LLVM_PGO_DIR}/cs-name`;
     rmSync(csNameDir, { force: true, recursive: true });
     mkdirSync(csNameDir, { recursive: true });
-    await $`${CLANG64}/bin/llvm-ar.exe x ${resourceDir}/lib/windows/libclang_rt.profile-x86_64.a InstrProfilingNameVar.c.obj`
+    // From the runtime the link uses; the install has per-target runtime dirs, CLANG64 doesn't.
+    const profileRuntime = runtimes
+        ? `${runtimes.resourceDir}/lib/${CLANG_WIN_TARGET}/libclang_rt.profile.a`
+        : `${clangResource}/lib/windows/libclang_rt.profile-x86_64.a`;
+    await $`${CLANG64}/bin/llvm-ar.exe x ${profileRuntime} InstrProfilingNameVar.c.obj`
         .cwd(csNameDir)
         .env(clang64Env);
     await buildInstrumented(

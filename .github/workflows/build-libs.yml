@@ -445,6 +445,13 @@ jobs:
                   name: llvm-rt-${{ github.run_number }}
                   path: C:/dev-clang
 
+            # Before the Rust step: a release without prebuilt binaries is compiled from source, which the repo's cargo
+            # config would route through sccache, not installed yet.
+            - name: Install cargo-c
+              uses: taiki-e/install-action@v2
+              with:
+                  tool: cargo-c
+
             # rav1e builds with the repo's global cargo config (win-clang-* profiles, build-std), which needs nightly,
             # rust-src and the gnullvm target. The config's build dir is a path on the author's machine.
             - name: Rust
@@ -455,16 +462,11 @@ jobs:
                   New-Item -ItemType Directory -Force "$HOME/.cargo" | Out-Null
                   (Get-Content configs/config.toml -Raw) -replace 'build-dir = ".*"', 'build-dir = "C:/cargo-build"' | Set-Content "$HOME/.cargo/config.toml"
 
-            - name: Install cargo-c
-              uses: taiki-e/install-action@v2
-              with:
-                  tool: cargo-c
-
             # Repos go to C:, the workspace drive only has ~14 GB free. llvm-project is built by the llvm job.
             - name: Build
               shell: pwsh
               run: |
-                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,llvm-runtimes,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3,ruby-2.7.8,ruby-3.3.14,ruby-3.4.13,ruby-4.0.10')
+                  $buildArgs = @('--repos', 'C:/repos', '--pgo', 'libs', '--exclude', 'llvm-project,llvm-runtimes,gmp,libyaml,libffi,openssl,ruby-1.8.1,ruby-1.8.7,ruby-1.9.2,ruby-1.9.3,ruby-2.7.8,ruby-3.3.14,ruby-3.4.13,ruby-4.0.10')
                   if ($env:INPUT_ONLY) { $buildArgs += @('--only', $env:INPUT_ONLY) }
                   node dev/build-libs/index.ts @buildArgs
 
@@ -485,6 +487,46 @@ jobs:
                   compression-level: 9
                   retention-days: 14
                   if-no-files-found: warn
+
+    # The cargo tools in use, with the repo's win-clang-release profile (configs/config.toml) plus -Ztune-cpu=znver1 (rustc's mtune).
+    # They come from crates.io, hence `cargo install`: one invocation, so the dependencies the tools share build once in the shared build-dir.
+    cargo-tools:
+        name: Cargo tools
+        if: ${{ inputs.only == '' || contains(inputs.only, 'cargo-tools') }}
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/build-libs-setup
+
+            # The gnullvm target links with CLANG64's clang (lld, compiler-rt, libunwind, the mingw-w64 CRT).
+            - name: Toolchain
+              shell: pwsh
+              run: |
+                  C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  Add-Content $env:GITHUB_PATH 'C:\msys64\clang64\bin'
+                  rustup toolchain install nightly-x86_64-pc-windows-gnullvm --profile minimal --component rust-src
+                  rustup default nightly-x86_64-pc-windows-gnullvm
+                  $config = (Get-Content configs/config.toml -Raw) -replace 'build-dir = ".*"', 'build-dir = "C:/cargo-build"'
+                  $config = $config -replace '(?s)(\[profile\.win-clang-release\].*?rustflags = \[)', '$1"-Ztune-cpu=znver1",'
+                  New-Item -ItemType Directory -Force "$HOME/.cargo" | Out-Null
+                  Set-Content "$HOME/.cargo/config.toml" $config
+
+            # RUSTC_WRAPPER is emptied: the config's sccache is one of the tools being built.
+            - name: Build
+              shell: pwsh
+              env:
+                  RUSTC_WRAPPER: ""
+              run: cargo install --locked --profile win-clang-release --target x86_64-pc-windows-gnullvm --root C:/cargo-tools ripgrep sd fd-find sccache tokei
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: cargo-tools-${{ github.run_number }}
+                  path: C:/cargo-tools/bin
+                  compression-level: 9
+                  retention-days: 14
+                  if-no-files-found: error
 
     # Every Ruby, one runner each. The 1.x ones are i686 builds with llvm-mingw (msvcrt); the others are full x86_64 builds with
     # CLANG64 against the llvm-runtimes install: shared libruby, every extension, the dependency DLLs next to ruby.exe.
@@ -521,6 +563,16 @@ jobs:
                   Expand-Archive $zip C:/PATH
                   Rename-Item C:/PATH/llvm-mingw-20261117-msvcrt-i686 llvm-mingw-msvcrt-i686
 
+            # Resume: restores the prefix (this Ruby's install and its static dependencies) and the build state from the latest
+            # earlier run, so a finished Ruby is not rebuilt and a run that hit the 6 h limit continues where it stopped.
+            - uses: actions/cache/restore@v6
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: ${{ matrix.ruby }}-${{ github.run_id }}
+                  restore-keys: ${{ matrix.ruby }}-
+
             - uses: actions/download-artifact@v8
               with:
                   name: llvm-rt-${{ github.run_number }}
@@ -529,7 +581,19 @@ jobs:
             # Repos go to C:, the workspace drive only has ~14 GB free.
             - name: Build
               shell: pwsh
-              run: node dev/build-libs/index.ts --repos C:/repos --pgo off --only-release --only ${{ matrix.ruby }}
+              run: |
+                  $only = "${{ matrix.ruby }}"
+                  # The 3.x and 4.x Rubies link gmp, openssl, libyaml and libffi statically: built first, into the prefix.
+                  if (-not ($only -like "ruby-1.*" -or $only -like "ruby-2.*")) { $only = "gmp,libyaml,libffi,openssl,$only" }
+                  node dev/build-libs/index.ts --repos C:/repos --pgo off --only-release --only $only
+
+            - uses: actions/cache/save@v6
+              if: always()
+              with:
+                  path: |
+                      C:/dev-clang
+                      dev/build-libs/build-state.json
+                  key: ${{ matrix.ruby }}-${{ github.run_id }}
 
             # Only the install on PATH, like on a user's machine.
             - name: Gems

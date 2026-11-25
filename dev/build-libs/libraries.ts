@@ -14,7 +14,7 @@ import {
 } from "./builders.ts";
 import { FFMPEG_VARIANTS, ffmpegCodecArgs } from "./ffmpeg.ts";
 import { llvmProject, llvmRuntimes } from "./llvm.ts";
-import { ruby, rubyX64 } from "./ruby.ts";
+import { ruby, RUBY_DEPENDENCIES, rubyX64 } from "./ruby.ts";
 import { buildDir, MAGICK_PGO_VARIANT, magickSuffix, ROOT, settings, TOOLCHAINS_DIR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
 import type { Library } from "./types.ts";
@@ -34,7 +34,7 @@ async function withoutLibsProfile<T>(build: () => Promise<T>): Promise<T> {
     }
 }
 
-export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg", "openssl", "libyaml", "libffi", "gmp"];
+export const MSYS2_EXTRA = ["mesa", "imagemagick", "ffmpeg"];
 
 const LIBLTDL_COMMON = `#define HAVE_INTTYPES_H 1
 #define HAVE_PRELOADED_SYMBOLS 1
@@ -1109,7 +1109,8 @@ export const LIBRARIES: Library[] = [
             await $`git submodule update --depth 1 --init --recursive`.cwd(path);
         },
     },
-    ruby("ruby-1.8.1", "https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.1.tar.gz", "1.8.1"),
+    ...RUBY_DEPENDENCIES,
+    ruby("ruby-1.8.1","https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.1.tar.gz", "1.8.1"),
     ruby("ruby-1.8.7", "https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.7-p374.tar.gz", "1.8.7-p374"),
     ruby("ruby-1.9.3", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p551.tar.gz", "1.9.3-p551"),
     ruby("ruby-1.9.2", "https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.2-p330.tar.gz", "1.9.2-p330"),
