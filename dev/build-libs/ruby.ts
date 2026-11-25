@@ -97,6 +97,14 @@ export function rubyX64(name: string, archive: string, version: string): Library
             replaceInFile(`${path}/configure`, 'NM="$NM --no-llvm-bc"', ":", { optional: true });
             if (legacy) {
                 await patchRuby27(path);
+            } else {
+                // Static OpenSSL: libruby exports send, recv, connect, ... too, taking CRT descriptors instead of sockets, and
+                // is linked first. ws2_32 has to precede it, or every TLS connection fails with ENOTSOCK.
+                replaceInFile(
+                    `${path}/ext/openssl/extconf.rb`,
+                    'require "mkmf"\n',
+                    'require "mkmf"\n$LOCAL_LIBS << " -lws2_32"\n',
+                );
             }
         },
         build: ({ path, root }) => buildRubyX64(path, `${root}/${name}`, legacy),

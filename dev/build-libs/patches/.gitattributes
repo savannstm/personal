@@ -1,0 +1,2 @@
+# A CRLF checkout (autocrlf on the Windows runners) doesn't apply to sources that force LF, e.g. zstd's.
+*.patch text eol=lf

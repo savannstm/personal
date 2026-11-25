@@ -4,5 +4,5 @@ diff --git a/lldb/tools/argdumper/CMakeLists.txt b/lldb/tools/argdumper/CMakeLis
 @@ -5,4 +5,3 @@
      Support
  )
-
+ 
 -add_dependencies(liblldb lldb-argdumper)
