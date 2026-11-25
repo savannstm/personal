@@ -21,7 +21,8 @@ export function installedRuntimes(root: string) {
     }
     return {
         cxxIncludes: [`${root}/include/${CLANG_WIN_TARGET}/c++/v1`, `${root}/include/c++/v1`],
-        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`],
+        // Not ${root}/lib: a debug link would take the release prefix's libraries (libjpeg 6) over CLANG64's.
+        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`],
         resourceDir: `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`,
     };
 }

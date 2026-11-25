@@ -1000,14 +1000,6 @@ export const LIBRARIES: Library[] = [
             // Swaps GPL FFTW3 for BSD-licensed PocketFFT
             await applyPatch(path, "imagemagick-fourier-pocketfft.patch");
 
-            // shortcut: libjpeg-turbo here is built JPEG 6 only (WITH_JPEG7/8=OFF), so jpeg_default_qtables is missing and the
-            // separate luma/chroma quality (-quality rho,sigma) is ignored; upgrade by enabling WITH_JPEG8 and rebuilding libjpeg-turbo.
-            replaceInFile(
-                `${path}/coders/jpeg.c`,
-                "          jpeg_default_qtables(jpeg_info,TRUE);",
-                "#if JPEG_LIB_VERSION >= 70\n          jpeg_default_qtables(jpeg_info,TRUE);\n#endif",
-            );
-
             if (msvc) {
                 replaceInFile(`${path}/configure`, "GOMP_LIBS=''", "GOMP_LIBS=' '");
 
