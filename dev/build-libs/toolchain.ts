@@ -19,13 +19,10 @@ export function installedRuntimes(root: string) {
     if (!existsSync(`${root}/lib/${CLANG_WIN_TARGET}/libc++.a`)) {
         return null;
     }
-    const resourceDir = `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`;
     return {
         cxxIncludes: [`${root}/include/${CLANG_WIN_TARGET}/c++/v1`, `${root}/include/c++/v1`],
-        // compiler-rt's libraries. clang adds this dir only when the link reaches it with -resource-dir; ImageMagick's
-        // libtool link failed with "unable to find library -lclang_rt.builtins", so name the dir explicitly.
-        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`, `${resourceDir}/lib/${CLANG_WIN_TARGET}`],
-        resourceDir,
+        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`],
+        resourceDir: `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`,
     };
 }
 
@@ -474,7 +471,8 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
                 `-isystem ${runtimes.resourceDir}/include`,
                 `-isystem ${clangHeaders}`,
             );
-            ldflags.push(`-resource-dir ${runtimes.resourceDir}`);
+            // One token: ImageMagick's libtool link lost the two-token form, so clang used CLANG64's runtimes (duplicate symbols).
+            ldflags.push(`-resource-dir=${runtimes.resourceDir}`);
         }
         ldflags.push(...runtimes.libDirs.map((dir) => `-L${dir}`), "-lc++abi", "-lunwind");
     }
