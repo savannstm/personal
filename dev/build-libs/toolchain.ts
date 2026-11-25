@@ -19,10 +19,13 @@ export function installedRuntimes(root: string) {
     if (!existsSync(`${root}/lib/${CLANG_WIN_TARGET}/libc++.a`)) {
         return null;
     }
+    const resourceDir = `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`;
     return {
         cxxIncludes: [`${root}/include/${CLANG_WIN_TARGET}/c++/v1`, `${root}/include/c++/v1`],
-        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`],
-        resourceDir: `${root}/lib/clang/${latestVersionDir(`${root}/lib/clang`)}`,
+        // compiler-rt's libraries. clang adds this dir only when the link reaches it with -resource-dir; ImageMagick's
+        // libtool link failed with "unable to find library -lclang_rt.builtins", so name the dir explicitly.
+        libDirs: [`${root}/lib/${CLANG_WIN_TARGET}`, `${root}/lib`, `${resourceDir}/lib/${CLANG_WIN_TARGET}`],
+        resourceDir,
     };
 }
 
