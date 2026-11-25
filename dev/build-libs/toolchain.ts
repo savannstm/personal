@@ -128,7 +128,7 @@ let baseEnv: Record<string, string | undefined> | undefined;
 
 export async function updateEnv(isDebug: boolean) {
     const { cFlags, cxxFlags, includeFlags, ldFlags, root } = await computeFlags(isDebug),
-        { ownClang, toolchain, tools } = toolchainState(),
+        { ownClang, ownRuntimes, toolchain, tools } = toolchainState(),
         base = (baseEnv ??= Object.fromEntries(BASE_ENV_LISTS.map((name) => [name, process.env[name]]))),
         path = dualRoot("bin", isDebug);
 
@@ -141,7 +141,11 @@ export async function updateEnv(isDebug: boolean) {
     }
 
     const ownBin = ownClang ? `${buildRoot(false)}/bin${SEP}` : "";
-    process.env.PATH = ownBin + replaceEntry(base.PATH, path.active, path.inactive);
+    // llvm-runtimes installs the ASan DLL in the resource dir: without it, no debug program a configure script runs starts.
+    const runtimeBin = ownRuntimes
+        ? `${SEP}${installedRuntimes(buildRoot(false))!.resourceDir}/lib/${CLANG_WIN_TARGET}`
+        : "";
+    process.env.PATH = ownBin + replaceEntry(base.PATH, path.active, path.inactive) + runtimeBin;
 
     Object.assign(process.env, {
         ADDR2LINE: tools.addr2line,
