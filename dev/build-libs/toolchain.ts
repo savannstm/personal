@@ -640,7 +640,10 @@ function toIni(isDebug: boolean, b: BuildConfig, tools: Tools, cxxLead: string):
 
     lines.push("[binaries]");
     if (toolchain !== "msvc") {
-        const winArgs = `-fuse-ld=lld --target=${resolveWinTarget(toolchain)}`;
+        // Meson drops `-isystem` dirs that the compiler already searches by default, probing the bare binary: without the resource dir
+        // here, CLANG64's builtin headers (buildShared's `-isystem clangHeaders`) count as default and vanish from the command line.
+        const resourceDir = /-resource-dir (\S+)/.exec(b.cflags)?.[1],
+            winArgs = `-fuse-ld=lld --target=${resolveWinTarget(toolchain)}${resourceDir ? ` -resource-dir ${resourceDir}` : ""}`;
         lines.push(
             `c = ${quoteArr(`sccache ${tools.cc} ${winArgs}`)}`,
             `cpp = ${quoteArr(`sccache ${tools.cxx} ${winArgs}`)}`,
