@@ -5,7 +5,7 @@ import pc from "picocolors";
 
 import { buildDir, buildRoot, ROOT, TOOLCHAINS_DIR, WIN_TAR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
-import { computeFlags, rustPlatform, toolchainState } from "./toolchain.ts";
+import { computeFlags, installedRuntimes, rustPlatform, toolchainState } from "./toolchain.ts";
 import type { Ctx, Library } from "./types.ts";
 
 export function cmakeVal(on: boolean): string {
@@ -207,7 +207,11 @@ export async function buildAutoconf(
 
     await bash`cd ${msysPath} && make distclean`.noThrow();
 
-    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}" CXX="sccache ${tools.cxx}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${nativePrefix ? prefix : toMsysPath(prefix)} ${libtoolFlags}`;
+    // In ImageMagick's libtool shared link, -resource-dir from LDFLAGS never reached clang: compiler-rt was then missing or
+    // taken from CLANG64 (duplicate symbols). libtool runs $CC as the command prefix, so the flag goes there.
+    const resourceFlag = ownRuntimes && !ownClang ? ` -resource-dir=${installedRuntimes(buildRoot(false))!.resourceDir}` : "";
+
+    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}${resourceFlag}" CXX="sccache ${tools.cxx}${resourceFlag}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${nativePrefix ? prefix : toMsysPath(prefix)} ${libtoolFlags}`;
 
     if (libtool) {
         const libtoolPath = `${path}/libtool`;

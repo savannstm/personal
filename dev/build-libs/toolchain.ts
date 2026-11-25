@@ -471,8 +471,7 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
                 `-isystem ${runtimes.resourceDir}/include`,
                 `-isystem ${clangHeaders}`,
             );
-            // One token: ImageMagick's libtool link lost the two-token form, so clang used CLANG64's runtimes (duplicate symbols).
-            ldflags.push(`-resource-dir=${runtimes.resourceDir}`);
+            ldflags.push(`-resource-dir ${runtimes.resourceDir}`);
         }
         ldflags.push(...runtimes.libDirs.map((dir) => `-L${dir}`), "-lc++abi", "-lunwind");
     }
