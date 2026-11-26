@@ -10,6 +10,21 @@ import process from "node:process";
 
 const QP = 50;
 
+const USAGE = `Usage: gif-to-avif.ts <input_dir> <output_dir>
+
+Convert every .gif under <input_dir> (recursively) to AVIF using librav1e.
+Output is flat: each file is written to <output_dir>/<name>.avif, folder structure is not kept.
+
+Options:
+  -h, --help   Show this help and exit
+
+Notes:
+  - Quality is fixed at librav1e -qp 50 (lower = better quality, larger file).
+  - Output is 8-bit yuv420p.
+  - Existing outputs are overwritten. GIFs with the same name in different folders collide.
+  - A failed conversion is logged and skipped; the exit code is still 0.
+  - Requires ffmpeg built with librav1e.`;
+
 async function walkGifs(dir: string): Promise<string[]> {
     const entries = await readdir(dir, { withFileTypes: true });
     const files: string[] = [];
@@ -38,9 +53,15 @@ async function convertOne(gif: string, outputDir: string): Promise<void> {
 }
 
 async function main() {
-    const [inputDir, outputDir] = process.argv.slice(2);
+    const args = process.argv.slice(2);
+    if (args.includes("-h") || args.includes("--help")) {
+        console.log(USAGE);
+        process.exit(0);
+    }
+
+    const [inputDir, outputDir] = args;
     if (!inputDir || !outputDir) {
-        consola.error("Usage: gif-to-avif.ts <input_dir> <output_dir>");
+        consola.error("Usage: gif-to-avif.ts <input_dir> <output_dir>\nRun with --help for details.");
         process.exit(1);
     }
 

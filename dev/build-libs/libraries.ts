@@ -292,7 +292,7 @@ export const LIBRARIES: Library[] = [
 
     {
         name: "md4c",
-        source: { git: "https://github.com/mity/md4c", tag: "release-0.6.0" },
+        source: { git: "https://github.com/mity/md4c", tag: "0.6.0" },
         profile: { debugOpt: false },
         args: () => "-DBUILD_MD2HTML_EXECUTABLE=OFF",
     },

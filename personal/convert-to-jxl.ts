@@ -32,14 +32,42 @@ interface CliArgs {
     jobs: number;
 }
 
+const USAGE = `Usage: convert-to-jxl.ts [options] [src] [dst]
+
+Recursively convert images under <src> to JPEG XL in <dst>, keeping the folder structure.
+Defaults: src=./input, dst=./output
+
+Conversions:
+  JPG/JPEG     lossless JPEG transcode (bit-exact, no quality loss)
+  PNG          -d 1.0 (visually lossless), effort 5
+  WebP         dwebp -> PNG -> cjxl -d 1.0 (needs dwebp)
+  HEIC/HEIF    heif-convert -> PNG -> cjxl -d 1.0 (needs heif-convert)
+  AVIF         ffmpeg -> PNG -> cjxl -d 1.0 (needs ffmpeg)
+  GIF, others  copied unchanged
+
+Options:
+  -j, --jobs=<n>   Parallel conversions (default: CPU count)
+  -h, --help       Show this help and exit
+
+Notes:
+  - Requires cjxl (libjxl-tools).
+  - A failed conversion is replaced by a plain copy of the source.
+  - Files whose <name>.jxl already exists in <dst> are skipped.
+  - The source is only read; nothing in <src> is modified or deleted.`;
+
 function parseCliArgs(): CliArgs {
-    const positionals = process.argv.slice(2).filter((a) => !a.startsWith("-"));
-    const { values } = parseArgs({
+    const { values, positionals } = parseArgs({
         allowPositionals: true,
         options: {
+            help: { short: "h", type: "boolean" },
             jobs: { short: "j", type: "string" },
         },
     });
+
+    if (values.help) {
+        console.log(USAGE);
+        process.exit(0);
+    }
 
     return {
         dst: positionals[1] ?? "./output",

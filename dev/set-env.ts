@@ -167,8 +167,16 @@ function buildMsvcCommand(): string {
 }
 
 function buildClangCommand(): string {
+    // C:/LLVM's ASan runtime DLL sits in its clang resource directory (CLANG64's is in its bin, already on PATH).
+    const clangRoot = "C:\\LLVM\\lib\\clang",
+        clangVersion = existsSync(clangRoot) ? latestByVersion(subdirs(clangRoot)) : undefined,
+        runtimeDirs = clangVersion ? [join(clangRoot, clangVersion, "lib", "x86_64-w64-windows-gnu")] : [];
+
     return [
-        setVar("PATH", composePath([CLANG64_BIN, ...toolDirs("clang")], process.env.PATH ?? "")),
+        setVar(
+            "PATH",
+            composePath(["C:\\LLVM\\bin", ...runtimeDirs, CLANG64_BIN, ...toolDirs("clang")], process.env.PATH ?? ""),
+        ),
         ...cmakeVars(),
         "rustup default nightly-gnullvm",
     ].join("\n");
