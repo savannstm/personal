@@ -1,0 +1,28 @@
+diff --git a/llvm/lib/Support/rpmalloc/malloc.c b/llvm/lib/Support/rpmalloc/malloc.c
+--- a/llvm/lib/Support/rpmalloc/malloc.c
++++ b/llvm/lib/Support/rpmalloc/malloc.c
+@@ -137,6 +137,24 @@ _realloc_base(void *ptr, size_t size) {
+ }
+ #endif
+ 
++#ifdef __MINGW32__
++// MinGW links the UCRT as DLLs, so its strdup allocates from the DLL's heap,
++// which the free() above can't release. MSVC builds link the CRT statically.
++char *RPMALLOC_CDECL _strdup(const char *str) {
++  if (!str)
++    return 0;
++  size_t size = strlen(str) + 1;
++  char *copy = (char *)rpmalloc(size);
++  return copy ? (char *)memcpy(copy, str, size) : 0;
++}
++char *RPMALLOC_CDECL strdup(const char *str) { return _strdup(str); }
++// The CRT headers declare both dllimport: callers go through these pointers.
++__attribute__((used)) char *(RPMALLOC_CDECL *__imp__strdup)(const char *) =
++    _strdup;
++__attribute__((used)) char *(RPMALLOC_CDECL *__imp_strdup)(const char *) =
++    strdup;
++#endif
++
+ #ifdef _WIN32
+ // For Windows, #include <rpnew.h> in one source file to get the C++ operator
+ // overrides implemented in your module

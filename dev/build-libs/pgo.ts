@@ -310,9 +310,15 @@ async function fetchDictionaries(): Promise<string[]> {
     ).then((pairs) => pairs.flat());
 }
 
+// Dependencies of chain libraries that have no trainer: built along with the chain, so those link the prefix's, not CLANG64's.
+// shortcut: not on training runs (their CI jobs set up no Rust for rav1e), where the chain links CLANG64's.
+const CHAIN_DEPENDENCIES = ["libspng", "openh264", "rav1e"];
+
 // Training needs the whole chain; a plain build honors --only/--exclude (restrict).
-async function buildChain(force = settings.force, restrict = false) {
-    const names = new Set([...PGO_LIBRARIES].filter((name) => !restrict || shouldBuildLibrary(name)));
+async function buildChain(force = settings.force, restrict = false, dependencies: readonly string[] = []) {
+    const names = new Set(
+        [...dependencies, ...PGO_LIBRARIES].filter((name) => !restrict || shouldBuildLibrary(name)),
+    );
     if (names.size === 0) {
         return;
     }
@@ -354,9 +360,10 @@ export async function libsPgo() {
             consola.warn(pc.yellow(`${message} Building without it.`));
             return;
         }
+        const dependencies = settings.pgoTraining ? [] : CHAIN_DEPENDENCIES;
         await withoutTraining(async () => {
             settings.libsPgo = "use";
-            await buildChain(settings.force, true);
+            await buildChain(settings.force, true, dependencies);
             settings.libsPgo = null;
         });
         return;

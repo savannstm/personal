@@ -395,6 +395,7 @@ export const LIBRARIES: Library[] = [
     {
         name: "openh264",
         source: { git: "https://github.com/cisco/openh264", tag: "v2.7.0" },
+        profile: { pgo: false },
         build: "meson",
         msys2: "openh264",
         args: () => "-Dtests=disabled",
@@ -446,6 +447,7 @@ export const LIBRARIES: Library[] = [
     {
         name: "rav1e",
         source: { git: "https://github.com/xiph/rav1e", tag: "v0.8.1" },
+        profile: { pgo: false },
         build: "rust",
         msys2: "rav1e",
         args: () => "--features capi,asm,threading",
@@ -560,6 +562,7 @@ export const LIBRARIES: Library[] = [
     {
         name: "libspng",
         source: { git: "https://github.com/randy408/libspng", tag: "v0.7.4" },
+        profile: { pgo: false },
         msys2: "libspng",
         args: ({ isDebug }) => `-DENABLE_OPT=ON -DSPNG_SHARED=${cmakeVal(isDebug)} -DSPNG_STATIC=${cmakeVal(!isDebug)}`,
         finish: async ({ root }) => {

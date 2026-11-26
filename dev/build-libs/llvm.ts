@@ -1,5 +1,5 @@
 import $ from "dax";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 
 import { applyPatch, configureCMake, replaceInFile } from "./builders.ts";
 import { msvcToolsRoot } from "./msvc.ts";
@@ -88,6 +88,36 @@ async function buildLlvmTablegen(llvmPath: string) {
 
 const llvmRuntimesArgs = () => `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=${buildRoot(false)}/lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
+const RPMALLOC_PATCH = "llvm-rpmalloc-mingw.patch";
+
+// The name cc-rs and cmake-rs pass for Rust's gnullvm target.
+const PC_VENDOR_TARGET = "x86_64-pc-windows-gnu";
+
+// Clang config files, installed next to the binaries. Our clang ships no mingw-w64 headers or import libraries: without a
+// sysroot neither it nor rustc (which links through it) works. --sysroot alone would also take CLANG64's libc++ headers.
+// Without -fuse-ld, clang runs whatever `ld` is on PATH (CLANG64's) and refuses to link LTO objects.
+const CLANG_CONFIGS: Record<string, string[]> = {
+    [CLANG_WIN_TARGET]: [
+        `--sysroot=${CLANG64}`,
+        "-fuse-ld=lld",
+        `-stdlib++-isystem <CFGDIR>/../include/${CLANG_WIN_TARGET}/c++/v1`,
+        "-stdlib++-isystem <CFGDIR>/../include/c++/v1",
+    ],
+    [PC_VENDOR_TARGET]: [`@${CLANG_WIN_TARGET}.cfg`, `-L<CFGDIR>/../lib/${CLANG_WIN_TARGET}`],
+    // clang-cl would otherwise load the first file and warn about every line.
+    [`${CLANG_WIN_TARGET}-clang-cl`]: [],
+};
+
+function installClangConfigs(root: string): void {
+    mkdirSync(`${root}/bin`, { recursive: true });
+    for (const [name, options] of Object.entries(CLANG_CONFIGS)) {
+        writeFileSync(`${root}/bin/${name}.cfg`, options.map((option) => `${option}\n`).join(""));
+    }
+    // No clang option points the other name at compiler-rt; unlike a link, a copy survives the artifact zip.
+    const runtimeDir = `${root}/lib/clang/${LLVM_MAJOR}/lib`;
+    cpSync(`${runtimeDir}/${CLANG_WIN_TARGET}`, `${runtimeDir}/${PC_VENDOR_TARGET}`, { recursive: true });
+}
+
 async function buildLlvmTarget(
     { isDebug, path }: Ctx,
     subdir: string,
@@ -105,8 +135,11 @@ export const llvmProject: Library = {
     source: LLVM_SOURCE,
     releaseOnly: true,
     profile: { ...LLVM_PROFILE, fatLto: false },
+    // The build stamp ignores patches: without this, a cached clang from before the allocator fix is skipped.
+    variants: () => RPMALLOC_PATCH,
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-argdumper.patch");
+        await applyPatch(path, RPMALLOC_PATCH);
         pruneLlvmSources(path, [
             "clang",
             "clang-tools-extra",
@@ -138,7 +171,7 @@ export const llvmRuntimes: Library = {
     source: LLVM_SOURCE,
     releaseOnly: true,
     // The build stamp ignores cmake args; without this, a cached build from before a config change (e.g. compiler-rt) is skipped.
-    variants: () => llvmRuntimesArgs(),
+    variants: () => `${llvmRuntimesArgs()} ${JSON.stringify(CLANG_CONFIGS)}`,
     profile: { ...LLVM_PROFILE, ownLibcxx: true, ownRuntimes: false, lto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-openmp-static-windows.patch");
@@ -165,4 +198,5 @@ export const llvmRuntimes: Library = {
             { ...process.env, PATH: `${msvcBin};${process.env.PATH ?? ""}` },
         );
     },
+    finish: async ({ root }) => installClangConfigs(root),
 };

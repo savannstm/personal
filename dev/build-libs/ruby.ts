@@ -92,7 +92,10 @@ export function rubyX64(name: string, archive: string, version: string): Library
         releaseOnly: true,
         toolchains: ["clang"],
         profile: { fatLto: false, mtune: "znver1", rtti: true },
+        // The build stamp ignores source edits: without this, a cached Ruby with the C runtime's jumps is skipped.
+        variants: () => "builtin-jumps",
         prepare: async ({ path }) => {
+            replaceInFile(`${path}/eval_intern.h`, RUBY_JUMPS, CLANG_BUILTIN_JUMPS);
             // --no-llvm-bc makes llvm-nm skip LTO's bitcode objects, so mkexports.rb finds no symbols to export from libruby.
             replaceInFile(`${path}/configure`, 'NM="$NM --no-llvm-bc"', ":", { optional: true });
             if (legacy) {
@@ -129,15 +132,28 @@ const withoutDroppedFlags = (flags: string) =>
         .filter((flag) => flag && !RUBY_DROPPED_FLAGS.has(flag))
         .join(" ");
 
+// Ruby's exception jumps through the compiler builtins, as in GCC builds: the C runtime's longjmp unwinds through SEH and makes a
+// raise several times slower. Clang's __builtin_setjmp stores a wrong frame pointer on Windows (every raise crashes), so RBP is
+// written over it. configure keeps --with-setjmp-type=setjmp: gc.c's use of RUBY_SETJMP needs the registers in the buffer.
+const RUBY_JUMPS =
+    "#define ruby_setjmp(env) RUBY_SETJMP(env)\n#define ruby_longjmp(env,val) RUBY_LONGJMP((env),(val))\n";
+export const CLANG_BUILTIN_JUMPS = `#define ruby_setjmp(env) __extension__({ \
+    void **const jumps_ = (void **)(env); \
+    const int jumped_ = __builtin_setjmp(jumps_); \
+    if (!jumped_) __asm__ __volatile__("movq %%rbp, (%0)" : : "r"(jumps_) : "memory"); \
+    jumped_; \
+})
+#define ruby_longjmp(env,val) __builtin_longjmp((void **)(env), (val))
+`;
+
 async function buildRubyX64(path: string, prefix: string, legacy: boolean) {
     // Ruby needs -fno-strict-aliasing; 2.7's C is too old for clang's stricter defaults.
     const cflags = `${withoutDroppedFlags(process.env.CFLAGS!)} -fno-strict-aliasing${legacy ? " -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types -Wno-error=implicit-int" : ""}`,
         ldflags = withoutDroppedFlags(process.env.LDFLAGS!);
 
-    // setjmp: configure picks __builtin_setjmp, which crashes every raise under clang on Windows. libwinpthread (static) is for
-    // clock_gettime. 2.7 detects the C runtime by the msvc*.dll its test program imports; UCRT has none, so say it's UCRT.
-    // 2.7 builds only zlib and stringio (encodings are built regardless), like the 1.x rubies, and no rubygems; monitor is
-    // there with digest because the installer (tool/rbinstall.rb) loads rubygems, which requires them.
+    // libwinpthread (static) is for clock_gettime. 2.7 detects the C runtime by the msvc*.dll its test program imports; UCRT
+    // has none, so say it's UCRT. 2.7 builds only zlib and stringio (encodings are built regardless), like the 1.x rubies, and
+    // no rubygems; monitor is there with digest because the installer (tool/rbinstall.rb) loads rubygems, which requires them.
     await buildAutoconf(path, false, prefix, {
         args: `--build=x86_64-w64-mingw32 --host=x86_64-w64-mingw32 --disable-install-doc --disable-yjit --disable-zjit --with-baseruby=no --with-setjmp-type=setjmp${legacy ? " --with-ext='digest*,monitor,stringio,zlib' --disable-rubygems" : ""} --with-opt-dir=${buildRoot(false)}`,
         env: `RUBYOPT= LIBS=-l:libwinpthread.a${legacy ? " rb_cv_msvcrt=ucrt140" : ""} CFLAGS="${cflags}" LDFLAGS="${ldflags}"`,
@@ -220,6 +236,7 @@ async function finishRubyX64(prefix: string, legacy: boolean) {
 
 // 2.7 is minimal: basic Ruby, every encoding (and transcoder), zlib and stringio.
 const RUBY_SMOKE_TEST_27 = `
+    abort "raise" unless 10_000.times.count { |i| catch(:out) { begin; raise ArgumentError if i.odd?; throw :out, true; rescue ArgumentError; true; ensure; i.to_s; end } } == 10_000
     Encoding.name_list.each { |name| Encoding.find(name) }
     require "zlib"
     require "stringio"
@@ -227,6 +244,7 @@ const RUBY_SMOKE_TEST_27 = `
 `;
 
 const RUBY_SMOKE_TEST = `
+    abort "raise" unless 10_000.times.count { |i| catch(:out) { begin; raise ArgumentError if i.odd?; throw :out, true; rescue ArgumentError; true; ensure; i.to_s; end } } == 10_000
     missing = %w[bigdecimal date digest etc fcntl io/console json monitor objspace open3 openssl psych ripper securerandom socket stringio strscan zlib].reject { |lib|
         begin; require lib; true; rescue LoadError => e; warn "#{lib}: #{e.message}"; false; end
     }

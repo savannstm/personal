@@ -177,6 +177,12 @@ function buildClangCommand(): string {
             "PATH",
             composePath(["C:\\LLVM\\bin", ...runtimeDirs, CLANG64_BIN, ...toolDirs("clang")], process.env.PATH ?? ""),
         ),
+        // CLANG64's pkgconf spells its own include dir this way and so doesn't drop it as a system one: as -I, it would be
+        // searched before libc++'s headers.
+        setVar(
+            "PKG_CONFIG_SYSTEM_INCLUDE_PATH",
+            ["", "/"].map((end) => `${CLANG64_BIN.replaceAll("\\", "/")}/../include${end}`).join(";"),
+        ),
         ...cmakeVars(),
         "rustup default nightly-gnullvm",
     ].join("\n");
