@@ -7,6 +7,7 @@ import {
     MSYS2_MINGW_PACKAGES,
     toolDirs,
 } from "../../personal/install-tools/toolchain.ts";
+import { replaceInFile } from "./builders.ts";
 import { LIBRARIES, MSYS2_EXTRA, shouldBuildLibrary } from "./libraries.ts";
 import { latestVersionDir, msvcToolsRoot } from "./msvc.ts";
 import { LLVM_MINGW_I686 } from "./ruby.ts";
@@ -135,6 +136,11 @@ export async function installToolchainPackages(toolchain: Toolchain) {
             (name) => `mingw-w64-clang-x86_64-${name}`,
         );
         await bash`pacman -Syuq --needed --noconfirm ${[...MSYS2_BASE_PACKAGES, ...mingwPackages].join(" ")}`;
+
+        // LERC hardcodes libstdc++ in its static pkg-config metadata even when built with CLANG64's libc++.
+        replaceInFile(`${CLANG64}/lib/pkgconfig/Lerc.pc`, /^Libs\.private: -lstdc\+\+(?=\s|$)/m, "Libs.private: -lc++", {
+            optional: true,
+        });
     }
 
     // MSYS2's coreutils link.exe collides with the linker's name.

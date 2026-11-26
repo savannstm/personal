@@ -8,3 +8,5 @@ You can see the personal scripts at `personal/` and the scripts that build a bun
 
 - **Build**: `node dev/build-libs/index.ts --toolchain <clang|msvc> [--only <names>] [--exclude <names>] [--prefix <path>]`. Supported toolchains are `clang` (CLANG64 for Windows, system-vendored for Linux) and `msvc`.
 - **Adapt**: edit `libraries.ts` (the `LIBRARIES` array, in build order, one record per library), `settings.ts` (paths and install prefix), `toolchain.ts` (compiler flags and toolchain files), and `host.ts` (required tools and packages).
+
+On Windows, the CLANG64 build corrects LERC's installed pkg-config metadata after package setup so static TIFF dependencies link against libc++.
