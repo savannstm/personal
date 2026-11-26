@@ -499,8 +499,26 @@ jobs:
 
             - uses: ./.github/actions/build-libs-setup
 
+            # The latest crates.io version of each tool: the cache key, so a new release rebuilds the tools and nothing else does.
+            - name: Tool versions
+              id: versions
+              shell: pwsh
+              run: |
+                  $versions = foreach ($crate in 'ripgrep', 'sd', 'fd-find', 'sccache', 'tokei') {
+                      $version = (Invoke-RestMethod "https://crates.io/api/v1/crates/$crate" -UserAgent 'build-libs-ci').crate.max_stable_version
+                      "$crate-$version"
+                  }
+                  Add-Content $env:GITHUB_OUTPUT "key=$($versions -join '_')"
+
+            - uses: actions/cache@v6
+              id: cargo-tools
+              with:
+                  path: C:/cargo-tools
+                  key: cargo-tools-${{ steps.versions.outputs.key }}
+
             # The gnullvm target links with CLANG64's clang (lld, compiler-rt, libunwind, the mingw-w64 CRT).
             - name: Toolchain
+              if: steps.cargo-tools.outputs.cache-hit != 'true'
               shell: pwsh
               run: |
                   C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain"
@@ -515,6 +533,7 @@ jobs:
 
             # RUSTC_WRAPPER is emptied: the config's sccache is one of the tools being built.
             - name: Build
+              if: steps.cargo-tools.outputs.cache-hit != 'true'
               shell: pwsh
               env:
                   RUSTC_WRAPPER: ""
