@@ -1,6 +1,6 @@
-# Signing commits
+# Co-authoring commits
 
-Do not sign commits and don't co-author.
+Don't co-author.
 
 # Think Before Coding
 

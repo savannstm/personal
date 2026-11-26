@@ -6,8 +6,8 @@
 .idea
 
 .agents
-.gemini
-.codex
+/.gemini
+/.codex
 /.claude
 .cursor
 .codegraph
