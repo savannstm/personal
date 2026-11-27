@@ -5,7 +5,7 @@ import pc from "picocolors";
 
 import { buildDir, buildRoot, ROOT, TOOLCHAINS_DIR, WIN_TAR } from "./settings.ts";
 import { bash, raw, toMsysPath } from "./shell.ts";
-import { computeFlags, installedRuntimes, rustPlatform, toolchainState } from "./toolchain.ts";
+import { clangBuiltinHeaders, computeFlags, installedRuntimes, rustPlatform, toolchainState } from "./toolchain.ts";
 import type { Ctx, Library } from "./types.ts";
 
 export function cmakeVal(on: boolean): string {
@@ -209,9 +209,12 @@ export async function buildAutoconf(
 
     // In ImageMagick's libtool shared link, -resource-dir from LDFLAGS never reached clang: compiler-rt was then missing or
     // taken from CLANG64 (duplicate symbols). libtool runs $CC as the command prefix, so the flag goes there.
-    const resourceFlag = ownRuntimes && !ownClang ? ` -resource-dir=${installedRuntimes(buildRoot(false))!.resourceDir}` : "";
+    const resourceFlag = ownRuntimes && !ownClang ? ` -resource-dir=${installedRuntimes(buildRoot(false))!.resourceDir}` : "",
+        // configure also compiles helper programs with CC alone (gmp's gen-fac.c includes stdlib.h, which needs mm_malloc.h).
+        // Not CXX: builtin headers ahead of libc++'s wrappers break C++ includes.
+        ccHeaders = resourceFlag ? ` -isystem ${clangBuiltinHeaders()}` : "";
 
-    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}${resourceFlag}" CXX="sccache ${tools.cxx}${resourceFlag}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${nativePrefix ? prefix : toMsysPath(prefix)} ${libtoolFlags}`;
+    await bash`cd ${msysPath} && ${env} CC="sccache ${tools.cc}${resourceFlag}${ccHeaders}" CXX="sccache ${tools.cxx}${resourceFlag}" ${libsArg} ${configure} ${args} ${buildType} --prefix=${nativePrefix ? prefix : toMsysPath(prefix)} ${libtoolFlags}`;
 
     if (libtool) {
         const libtoolPath = `${path}/libtool`;

@@ -440,6 +440,11 @@ function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
     };
 }
 
+// CLANG64's clang builtin headers (mm_malloc.h, stddef.h, ...): tied to its version, so they stay when -resource-dir points at compiler-rt's install.
+export function clangBuiltinHeaders(): string {
+    return `${CLANG64}/lib/clang/${latestVersionDir(`${CLANG64}/lib/clang`)}/include`;
+}
+
 function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: boolean, ownRuntimes: boolean): Shared {
     const march = marchFlags(profile),
         userClang = profile.consumer === true && toolchain === "clang",
@@ -466,11 +471,10 @@ function buildShared(toolchain: Toolchain, profile: ToolchainProfile, ownClang: 
         if (!ownClang) {
             // CLANG64's clang takes compiler-rt (libraries and headers) from the install through its resource dir. Its own
             // builtin headers are tied to the clang version, so they stay, searched after compiler-rt's.
-            const clangHeaders = `${CLANG64}/lib/clang/${latestVersionDir(`${CLANG64}/lib/clang`)}/include`;
             cflags.push(
                 `-resource-dir ${runtimes.resourceDir}`,
                 `-isystem ${runtimes.resourceDir}/include`,
-                `-isystem ${clangHeaders}`,
+                `-isystem ${clangBuiltinHeaders()}`,
             );
             ldflags.push(`-resource-dir ${runtimes.resourceDir}`);
         }
