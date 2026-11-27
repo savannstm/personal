@@ -760,6 +760,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DOPENEXR_INSTALL_DOCS=OFF -DBUILD_WEBSITE=OFF -DOPENEXR_ENABLE_THREADING=ON -DOPENEXR_USE_TBB=OFF -DOPENEXR_USE_DEFAULT_VISIBILITY=OFF -DOPENEXR_ENABLE_LARGE_STACK=OFF -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_INSTALL_DEVELOPER_TOOLS=OFF -DOPENEXR_BUILD_EXAMPLES=OFF -DOPENEXR_BUILD_PYTHON=OFF -DOPENEXR_BUILD_OSS_FUZZ=OFF -DOPENEXR_TEST_LIBRARIES=OFF -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF -DOPENEXR_USE_CLANG_TIDY=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_OPENJPH=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_INSTALL_PKG_CONFIG=ON`,
         prepare: async ({ path }) => {
+            await applyPatch(path, "openexr-pkg-config.patch");
             replaceInFile(`${path}/CMakeLists.txt`, "add_subdirectory(website/src)", "");
             // shortcut: OpenEXR 3.5.4 vendors OpenJPH 0.33 but still requires 0.32 for discovery, so a PATH-found msys64 0.32 wins; drop once upstream bumps the minimum
             replaceInFile(
@@ -784,6 +785,7 @@ export const LIBRARIES: Library[] = [
         args: () =>
             `-DBUILD_CLI=OFF -DBUILD_FUZZERS=OFF -DUSE_THREADS=ON -DUSE_NSEC=ON -DUSE_SSH=OFF -DUSE_HTTPS=ON -DREGEX_BACKEND=pcre2 -DDEPRECATE_HARD=ON`,
         prepare: async ({ path }) => {
+            await applyPatch(path, "libgit2-pkg-config.patch");
             replaceInFile(`${path}/CMakeLists.txt`, "include(DefaultCFlags)", "");
         },
     },
@@ -863,6 +865,9 @@ export const LIBRARIES: Library[] = [
         msys2: "libheif",
         args: () =>
             `-DWITH_EXAMPLES=OFF -DWITH_EXAMPLE_HEIF_THUMB=OFF -DWITH_EXAMPLE_HEIF_VIEW=OFF -DWITH_GDK_PIXBUF=OFF -DENABLE_PLUGIN_LOADING=OFF -DWITH_LIBDE265=ON -DWITH_X265=OFF -DWITH_KVAZAAR=ON -DWITH_UVG266=OFF -DWITH_VVDEC=OFF -DWITH_VVENC=OFF -DWITH_X264=OFF -DWITH_OpenH264_DECODER=ON -DWITH_DAV1D=ON -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF -DWITH_SvtEnc=OFF -DWITH_RAV1E=ON -DWITH_JPEG_DECODER=ON -DWITH_JPEG_ENCODER=OFF -DWITH_OpenJPEG_ENCODER=OFF -DWITH_OpenJPEG_DECODER=ON -DWITH_FFMPEG_DECODER=OFF -DWITH_OPENJPH_ENCODER=OFF -DWITH_UNCOMPRESSED_CODEC=OFF -DWITH_WEBCODECS=OFF -DWITH_LIBSHARPYUV=ON -DBUILD_DOCUMENTATION=OFF`,
+        prepare: async ({ path }) => {
+            await applyPatch(path, "libheif-rav1e-link.patch");
+        },
         finish: async ({ isDebug, root }) => {
             if (!isDebug) {
                 stripDllImport(`${root}/include/libheif/heif_export.h`);

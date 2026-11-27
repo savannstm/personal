@@ -1,6 +1,7 @@
-// Alternates each CI-built Ruby and the installed one of the same minor version (C:/PATH/ruby*, RubyInstaller); skips Rubies
-// with no such counterpart. Reports the best and the median of ROUNDS runs per workload. Run on an idle machine.
-// Usage: node ruby-bench.ts [rounds] [version-regex] [script: ruby-bench.rb | ruby-micro.rb]
+// Alternates each CI-built Ruby and its RubyInstaller counterpart (C:/PATH/ruby*). Ruby 1.x matches all three
+// components of RUBY_VERSION; newer Rubies match by minor version. Reports the best and median per workload.
+// Run on an idle machine.
+// Usage: node ruby-bench.ts [rounds] [version-regex] [script: ruby-bench.rb | ruby-legacy.rb | ruby-micro.rb]
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { setPriority } from "node:os";
@@ -9,23 +10,31 @@ import process from "node:process";
 import { fromHere, PREFIX, setup } from "./common.ts";
 
 const ROUNDS = Number(process.argv[2] ?? 7),
-    SCRIPT = fromHere(process.argv[4] ?? "ruby-bench.rb"),
     WORK = setup("ruby-bench");
 
-const minor = (root: string) =>
-    // No --disable-gems: 1.8 rejects it.
-    execFileSync(`${root}/bin/ruby.exe`, ["-e", "print RUBY_VERSION[/\\d+\\.\\d+/]"], {
+const RUBY_INFO = String.raw`
+config = defined?(RbConfig) ? RbConfig::CONFIG : Config::CONFIG
+puts(defined?(RUBY_DESCRIPTION) ? RUBY_DESCRIPTION : [RUBY_VERSION, RUBY_RELEASE_DATE, RUBY_PLATFORM].join(" "))
+puts "  CC=#{config["CC_VERSION_MESSAGE"].to_s.split(/\r?\n/, 2).first}"
+puts "  CFLAGS=#{config["CFLAGS"]}"
+puts "  VM=#{RubyVM::OPTS.join(", ")}" if defined?(RubyVM::OPTS)
+`;
+
+const comparisonVersion = (root: string) => {
+    const version = execFileSync(`${root}/bin/ruby.exe`, ["-e", "print RUBY_VERSION"], {
         encoding: "utf8",
     });
+    return version.startsWith("1.") ? version : version.split(".").slice(0, 2).join(".");
+};
 const installed = new Map(
     readdirSync("C:/PATH")
         .filter((dir) => /^ruby(-|$)/.test(dir) && existsSync(`C:/PATH/${dir}/bin/ruby.exe`))
-        .map((dir) => [minor(`C:/PATH/${dir}`), dir]),
+        .map((dir) => [comparisonVersion(`C:/PATH/${dir}`), dir]),
 );
 const PAIRS = readdirSync(`${PREFIX}/release`)
     .filter((dir) => dir.startsWith("ruby-"))
     .flatMap((dir): [string, string][] => {
-        const match = installed.get(minor(`${PREFIX}/release/${dir}`));
+        const match = installed.get(comparisonVersion(`${PREFIX}/release/${dir}`));
         return match ? [[dir.slice(5), match]] : [];
     });
 
@@ -49,26 +58,22 @@ function startup(root: string, flags: string[]): number {
 
 for (const [ci, other] of PAIRS.filter(([v]) => new RegExp(process.argv[3] ?? ".").test(v))) {
     const roots = { ci: `${PREFIX}/release/ruby-${ci}`, ri: `C:/PATH/${other}` },
+        script = fromHere(process.argv[4] ?? (ci.startsWith("1.") ? "ruby-legacy.rb" : "ruby-bench.rb")),
         times = { ci: new Map<string, number[]>(), ri: new Map<string, number[]>() };
     for (const key of ["ci", "ri"] as const) {
-        console.log(
-            key,
-            run(roots[key], [
-                "-rrbconfig",
-                "-e",
-                'puts RUBY_DESCRIPTION; puts "  CC=#{RbConfig::CONFIG["CC_VERSION_MESSAGE"].to_s.lines.first}"; puts "  CFLAGS=#{RbConfig::CONFIG["CFLAGS"]}"; puts "  VM=#{RubyVM::OPTS.join(", ")}"',
-            ]).trimEnd(),
-        );
+        console.log(key, run(roots[key], ["-rrbconfig", "-e", RUBY_INFO]).trimEnd());
     }
     for (let round = 0; round < ROUNDS; round++) {
         for (const key of round % 2 ? (["ri", "ci"] as const) : (["ci", "ri"] as const)) {
-            const results = run(roots[key], [SCRIPT])
+            const results = run(roots[key], [script])
                 .trim()
                 .split(/\r?\n/)
                 .map((line) => line.split(" "));
-            if (SCRIPT.endsWith("ruby-bench.rb")) {
+            if (script.endsWith("ruby-bench.rb") || script.endsWith("ruby-legacy.rb")) {
                 results.push(["startup", String(startup(roots[key], []))]);
-                results.push(["startup_no_gems", String(startup(roots[key], ["--disable-gems"]))]);
+                if (!ci.startsWith("1.8.")) {
+                    results.push(["startup_no_gems", String(startup(roots[key], ["--disable-gems"]))]);
+                }
             }
             for (const [name, seconds] of results) {
                 const list = times[key].get(name!) ?? [];

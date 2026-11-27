@@ -30,6 +30,7 @@ import {
     DEBUG_TRAIN_CFLAGS,
     installedRuntimes,
     RELEASE_NON_LTO_LINKER_FLAGS,
+    THRESHOLD_LTO_LDFLAGS,
     updateEnv,
 } from "./toolchain.ts";
 
@@ -183,6 +184,7 @@ export async function trainLlvm(path: string, llvmArgs: string, optFlags: string
                     "-fdata-sections",
                     ...RELEASE_NON_LTO_LINKER_FLAGS,
                     "-Wl,--lto-O3",
+                    ...THRESHOLD_LTO_LDFLAGS,
                     // The consumers' link applies the library profile's CS part (linkLibsProfile), which changes the LTO work.
                     ...(existsSync(settings.libsProfdata) ? [`-fprofile-use=${settings.libsProfdata}`] : []),
                     "-static",

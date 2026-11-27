@@ -1,0 +1,14 @@
+diff --git a/cmake/SelectHTTPSBackend.cmake b/cmake/SelectHTTPSBackend.cmake
+--- a/cmake/SelectHTTPSBackend.cmake
++++ b/cmake/SelectHTTPSBackend.cmake
+@@ -131,9 +131,8 @@
+ 			list(APPEND LIBGIT2_DEPENDENCY_INCLUDES "${PROJECT_SOURCE_DIR}/deps/winhttp")
+ 		else()
+ 			list(APPEND LIBGIT2_SYSTEM_LIBS "winhttp")
+-			list(APPEND LIBGIT2_PC_LIBS "-lwinhttp")
+ 		endif()
+ 
+ 		list(APPEND LIBGIT2_SYSTEM_LIBS "rpcrt4" "crypt32" "ole32")
+-		list(APPEND LIBGIT2_PC_LIBS "-lrpcrt4" "-lcrypt32" "-lole32")
++		list(APPEND LIBGIT2_PC_LIBS "-lwinhttp" "-lrpcrt4" "-lcrypt32" "-lole32")
+ 	elseif(USE_HTTPS STREQUAL "OpenSSL-Dynamic")

@@ -1,0 +1,14 @@
+diff --git a/cmake/modules/FindRAV1E.cmake b/cmake/modules/FindRAV1E.cmake
+--- a/cmake/modules/FindRAV1E.cmake
++++ b/cmake/modules/FindRAV1E.cmake
+@@ -22,3 +22,10 @@
+         RAV1E_INCLUDE_DIR
+         RAV1E_LIBRARIES
+ )
++
++if(WIN32 AND NOT BUILD_SHARED_LIBS AND RAV1E_FOUND)
++    # Keep the archive found above and propagate Rust's native link dependencies.
++    list(REMOVE_ITEM RAV1E_PKGCONF_STATIC_LIBRARIES rav1e)
++    list(REMOVE_DUPLICATES RAV1E_PKGCONF_STATIC_LIBRARIES)
++    list(APPEND RAV1E_LIBRARIES ${RAV1E_PKGCONF_STATIC_LIBRARIES})
++endif()

@@ -88,8 +88,6 @@ async function buildLlvmTablegen(llvmPath: string) {
 
 const llvmRuntimesArgs = () => `${LLVM_COMMON_ARGS} -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind;openmp" -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBUNWIND_ENABLE_STATIC=ON -DLIBOMP_ENABLE_SHARED=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON -DCOMPILER_RT_INSTALL_PATH=${buildRoot(false)}/lib/clang/${LLVM_MAJOR} -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_PROFILE=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_USE_BUILTINS_LIBRARY=ON -DSANITIZER_CXX_ABI=libc++ -DCMAKE_C_COMPILER_TARGET=${CLANG_WIN_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${CLANG_WIN_TARGET} -DSANITIZER_CXX_ABI_LIBRARIES="-Llib;-lc++;-lc++abi;-lunwind"`;
 
-const RPMALLOC_PATCH = "llvm-rpmalloc-mingw.patch";
-
 // The name cc-rs and cmake-rs pass for Rust's gnullvm target.
 const PC_VENDOR_TARGET = "x86_64-pc-windows-gnu";
 
@@ -135,11 +133,9 @@ export const llvmProject: Library = {
     source: LLVM_SOURCE,
     releaseOnly: true,
     profile: { ...LLVM_PROFILE, fatLto: false },
-    // The build stamp ignores patches: without this, a cached clang from before the allocator fix is skipped.
-    variants: () => RPMALLOC_PATCH,
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-argdumper.patch");
-        await applyPatch(path, RPMALLOC_PATCH);
+        await applyPatch(path, "llvm-rpmalloc-mingw.patch");
         pruneLlvmSources(path, [
             "clang",
             "clang-tools-extra",
@@ -170,8 +166,6 @@ export const llvmRuntimes: Library = {
     name: "llvm-runtimes",
     source: LLVM_SOURCE,
     releaseOnly: true,
-    // The build stamp ignores cmake args; without this, a cached build from before a config change (e.g. compiler-rt) is skipped.
-    variants: () => `${llvmRuntimesArgs()} ${JSON.stringify(CLANG_CONFIGS)}`,
     profile: { ...LLVM_PROFILE, ownLibcxx: true, ownRuntimes: false, lto: false },
     prepare: async ({ path }) => {
         await applyPatch(path, "llvm-openmp-static-windows.patch");

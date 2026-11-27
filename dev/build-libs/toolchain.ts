@@ -256,6 +256,18 @@ const RELEASE_NON_LTO_CFLAGS = [
     "-Qn",
     "-Brepro",
 ];
+// Raised -O3 budgets: inlining 250 -> 400, full unrolling 300 -> 450. An explicit inline threshold also lifts the one for
+// cold functions, so that stays at LLVM's 45.
+const LLVM_THRESHOLDS = ["-inline-threshold=400", "-inlinecold-threshold=45", "-unroll-threshold-aggressive=450"];
+// Compile flags also reach link commands, where they are unused: CMake's and meson's flag probes fail on that warning.
+const THRESHOLD_CFLAGS = [
+    "--start-no-unused-arguments",
+    ...LLVM_THRESHOLDS.map((option) => `-mllvm=${option}`),
+    "--end-no-unused-arguments",
+];
+// Full LTO optimizes at the link, which takes the options from the linker.
+export const THRESHOLD_LTO_LDFLAGS = LLVM_THRESHOLDS.map((option) => `-Wl,-mllvm,${option}`);
+const THRESHOLD_MSVC_LTO_LDFLAGS = LLVM_THRESHOLDS.map((option) => `-Wl,-mllvm:${option}`);
 const RELEASE_NON_LTO_MSVC_LINKER_FLAGS = [
     "-Wl,-DEBUG:NONE",
     "-Wl,-OPT:REF",
@@ -363,7 +375,7 @@ export function marchFlags(profile: ToolchainProfile): string[] {
 }
 
 export function releaseOptFlags(lto: boolean, fatLto: boolean): string[] {
-    const flags = [...RELEASE_NON_LTO_CFLAGS];
+    const flags = [...RELEASE_NON_LTO_CFLAGS, ...THRESHOLD_CFLAGS];
     if (lto) {
         flags.push("-flto=full");
         if (fatLto) {
@@ -391,7 +403,7 @@ function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
     if (settings.toolchain === "msvc") {
         linkerFlags.push(...RELEASE_NON_LTO_MSVC_LINKER_FLAGS);
         if (lto) {
-            linkerFlags.push("-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3");
+            linkerFlags.push("-Wl,-LTCG", "-Wl,-OPT:LLDLTO=3", ...THRESHOLD_MSVC_LTO_LDFLAGS);
             if (fatLto) {
                 linkerFlags.push("-Wl,-fat-lto-objects");
             }
@@ -399,7 +411,7 @@ function buildRelease(shared: Shared, profile: ToolchainProfile): BuildConfig {
     } else {
         linkerFlags.push(...RELEASE_NON_LTO_LINKER_FLAGS);
         if (lto) {
-            linkerFlags.push("-Wl,--lto-O3");
+            linkerFlags.push("-Wl,--lto-O3", ...THRESHOLD_LTO_LDFLAGS);
         }
     }
 

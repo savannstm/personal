@@ -19,7 +19,14 @@ import {
 import { FFMPEG_DEMUXERS, FFMPEG_FIXTURES_DIR, FFMPEG_INPUTS } from "./pgo-fixtures.ts";
 import { buildRepos } from "./runner.ts";
 import { CLANG64, llvmPgo, llvmTargets, PROFILES_DIR, ROOT, settings, WIN_TAR } from "./settings.ts";
-import { CLANG_WIN_TARGET, configureToolchain, CONSUMER_PROFILE, marchFlags, releaseOptFlags } from "./toolchain.ts";
+import {
+    CLANG_WIN_TARGET,
+    configureToolchain,
+    CONSUMER_PROFILE,
+    marchFlags,
+    releaseOptFlags,
+    THRESHOLD_LTO_LDFLAGS,
+} from "./toolchain.ts";
 import type { Library } from "./types.ts";
 
 const LIBS_PGO_DIR = `${ROOT}/pgo/libs`;
@@ -466,7 +473,8 @@ async function runTrainers(prefix: string, stage: "cs" | "ir"): Promise<Map<stri
                       ...releaseOptFlags(true, CONSUMER_PROFILE.fatLto !== false),
                       `-fprofile-use=${settings.libsIrProfdata}`,
                   ],
-        linkFlags = stage === "ir" ? [] : ["-Wl,--lto-O3", "-fcs-profile-generate", CS_LINK_NAME_VAR],
+        linkFlags =
+            stage === "ir" ? [] : ["-Wl,--lto-O3", ...THRESHOLD_LTO_LDFLAGS, "-fcs-profile-generate", CS_LINK_NAME_VAR],
         profiles = new Map<string, TrainedProfile>();
 
     const runs: (Trainer & { base?: string; sub?: string })[] = [];

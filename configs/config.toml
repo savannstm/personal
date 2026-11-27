@@ -77,7 +77,9 @@ rustflags = [
     "-Cllvm-args=-fp-contract=fast",
     "-Cllvm-args=-denormal-fp-math=positive-zero",
     "-Cllvm-args=-enable-no-trapping-fp-math=true",
-    "-Cllvm-args=-unroll-threshold=750",
+    "-Cllvm-args=-inline-threshold=400",
+    "-Cllvm-args=-inlinecold-threshold=45",
+    "-Cllvm-args=-unroll-threshold-aggressive=450",
 
     "-Clink-arg=-DEBUG:NONE",
     "-Clink-arg=-LTCG",
@@ -92,6 +94,9 @@ rustflags = [
     "-Clink-arg=-EMITVOLATILEMETADATA:NO",
     "-Clink-arg=-Brepro",
     "-Clink-arg=-OPT:LLDLTO=3",
+    "-Clink-arg=-mllvm:-inline-threshold=400",
+    "-Clink-arg=-mllvm:-inlinecold-threshold=45",
+    "-Clink-arg=-mllvm:-unroll-threshold-aggressive=450",
     "-Lnative=C:/dev/release/lib",
 ]
 
@@ -114,10 +119,15 @@ rustflags = [
     "-Cllvm-args=-fp-contract=fast",
     "-Cllvm-args=-denormal-fp-math=positive-zero",
     "-Cllvm-args=-enable-no-trapping-fp-math=true",
-    "-Cllvm-args=-unroll-threshold=750",
+    "-Cllvm-args=-inline-threshold=400",
+    "-Cllvm-args=-inlinecold-threshold=45",
+    "-Cllvm-args=-unroll-threshold-aggressive=450",
 
     "-Clink-arg=-Wl,-O3",
     "-Clink-arg=-Wl,--lto-O3",
+    "-Clink-arg=-Wl,-mllvm,-inline-threshold=400",
+    "-Clink-arg=-Wl,-mllvm,-inlinecold-threshold=45",
+    "-Clink-arg=-Wl,-mllvm,-unroll-threshold-aggressive=450",
     "-Clink-arg=-Wl,--gc-sections",
     "-Clink-arg=-Wl,--as-needed",
     "-Clink-arg=-Wl,--strip-all",
@@ -143,7 +153,9 @@ rustflags = [
     "-Cllvm-args=-fp-contract=fast",
     "-Cllvm-args=-denormal-fp-math=positive-zero",
     "-Cllvm-args=-enable-no-trapping-fp-math=true",
-    "-Cllvm-args=-unroll-threshold=750",
+    "-Cllvm-args=-inline-threshold=400",
+    "-Cllvm-args=-inlinecold-threshold=45",
+    "-Cllvm-args=-unroll-threshold-aggressive=450",
 ]
 
 [profile.linux-debug]
@@ -165,10 +177,15 @@ rustflags = [
     "-Cllvm-args=-fp-contract=fast",
     "-Cllvm-args=-denormal-fp-math=positive-zero",
     "-Cllvm-args=-enable-no-trapping-fp-math=true",
-    "-Cllvm-args=-unroll-threshold=750",
+    "-Cllvm-args=-inline-threshold=400",
+    "-Cllvm-args=-inlinecold-threshold=45",
+    "-Cllvm-args=-unroll-threshold-aggressive=450",
 
     "-Clink-arg=-Wl,-O3",
     "-Clink-arg=-Wl,--lto-O3",
+    "-Clink-arg=-Wl,-mllvm,-inline-threshold=400",
+    "-Clink-arg=-Wl,-mllvm,-inlinecold-threshold=45",
+    "-Clink-arg=-Wl,-mllvm,-unroll-threshold-aggressive=450",
     "-Clink-arg=-Wl,--gc-sections",
     "-Clink-arg=-Wl,--as-needed",
     "-Clink-arg=-Wl,--strip-all",

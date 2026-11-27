@@ -1,0 +1,23 @@
+diff --git a/cmake/CMakeLists.txt b/cmake/CMakeLists.txt
+--- a/cmake/CMakeLists.txt
++++ b/cmake/CMakeLists.txt
+@@ -254,6 +254,9 @@
+       endif()
+       set(exr_pthread_libs ${CMAKE_THREAD_LIBS_INIT})
+     endif()
++    if(MINGW AND ILMTHREAD_HAVE_POSIX_SEMAPHORES)
++      set(exr_semaphore_libs "-lwinpthread")
++    endif()
+     string(REPLACE ".in" "" pcout ${pcinfile})
+     configure_file(${pcinfile} ${CMAKE_CURRENT_BINARY_DIR}/${pcout} @ONLY)
+     install(
+diff --git a/cmake/OpenEXR.pc.in b/cmake/OpenEXR.pc.in
+--- a/cmake/OpenEXR.pc.in
++++ b/cmake/OpenEXR.pc.in
+@@ -15,5 +15,6 @@
+ Version: @OPENEXR_VERSION@
+ 
+ Libs: @exr_pthread_libs@ -L${libdir} -lOpenEXR${libsuffix} -lOpenEXRUtil${libsuffix} -lOpenEXRCore${libsuffix} -lIex${libsuffix} -lIlmThread${libsuffix}
++Libs.private: @exr_semaphore_libs@
+ Cflags: -I${includedir} -I${OpenEXR_includedir} @exr_pthread_cflags@
+ Requires: Imath

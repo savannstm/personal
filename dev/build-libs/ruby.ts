@@ -92,8 +92,6 @@ export function rubyX64(name: string, archive: string, version: string): Library
         releaseOnly: true,
         toolchains: ["clang"],
         profile: { fatLto: false, mtune: "znver1", rtti: true },
-        // The build stamp ignores source edits: without this, a cached Ruby with the C runtime's jumps is skipped.
-        variants: () => "builtin-jumps",
         prepare: async ({ path }) => {
             replaceInFile(`${path}/eval_intern.h`, RUBY_JUMPS, CLANG_BUILTIN_JUMPS);
             // --no-llvm-bc makes llvm-nm skip LTO's bitcode objects, so mkexports.rb finds no symbols to export from libruby.
